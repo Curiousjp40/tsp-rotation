@@ -1,0 +1,9 @@
+{
+  "short_name": "TSP Rotation",
+  "name": "TSP Fund Rotation Dashboard",
+  "icons": [],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0a2342",
+  "background_color": "#f4f6f9"
+}

@@ -1,0 +1,216 @@
+/**
+ * Shared metrics/ranking math for the TSP rotation dashboard.
+ *
+ * Written as CommonJS so it can be `require()`d directly from Node scripts
+ * (scripts/backtest.js) AND `import`ed from React components (webpack/CRA
+ * handles the CJS interop fine for named exports). This keeps the live
+ * dashboard and the backtest computing returns/Sharpe/drawdown/ranking with
+ * exactly the same code — no risk of the two silently drifting apart.
+ *
+ * `prices` throughout is an array of rows sorted ASCENDING by date:
+ *   [{ date: '2003-05-30', G: 10, F: 10, C: 10, S: 10, I: 10 }, ...]
+ */
+
+const CORE_FUNDS = ['C', 'S', 'I', 'F', 'G'];
+const RISK_FREE_FUND = 'G';
+
+// ---- date helpers -----------------------------------------------------
+
+/** Parse an ISO 'YYYY-MM-DD' string as a UTC date (avoids local-TZ drift). */
+function parseISO(dateStr) {
+  return new Date(`${dateStr}T00:00:00Z`);
+}
+
+function formatISO(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+/** Subtract N calendar months from an ISO date string, return an ISO string. */
+function subtractMonthsISO(dateStr, months) {
+  const d = parseISO(dateStr);
+  const result = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - months, d.getUTCDate()));
+  return formatISO(result);
+}
+
+// ---- lookup -------------------------------------------------------------
+
+/**
+ * Binary search for the last index whose date is <= targetDateStr.
+ * Returns -1 if targetDateStr is before the first row in `prices`.
+ */
+function findIndexOnOrBefore(prices, targetDateStr) {
+  let lo = 0;
+  let hi = prices.length - 1;
+  let result = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (prices[mid].date <= targetDateStr) {
+      result = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return result;
+}
+
+/**
+ * Resolve the start index for a trailing window of `windowMonths` calendar
+ * months, ending at `asOfIndex`. Returns null if there isn't enough history.
+ */
+function windowStartIndex(prices, asOfIndex, windowMonths) {
+  const asOfDate = prices[asOfIndex].date;
+  const startDate = subtractMonthsISO(asOfDate, windowMonths);
+  const idx = findIndexOnOrBefore(prices, startDate);
+  return idx < 0 ? null : idx;
+}
+
+// ---- core math ------------------------------------------------------------
+
+function trailingReturnPct(prices, fund, asOfIndex, windowMonths) {
+  const startIdx = windowStartIndex(prices, asOfIndex, windowMonths);
+  if (startIdx === null) return null;
+  const startPrice = prices[startIdx][fund];
+  const endPrice = prices[asOfIndex][fund];
+  if (startPrice == null || endPrice == null) return null;
+  return ((endPrice - startPrice) / startPrice) * 100;
+}
+
+/** Day-over-day % returns for `fund` across (startIdx, endIdx] — length endIdx-startIdx. */
+function dailyReturns(prices, fund, startIdx, endIdx) {
+  const out = [];
+  for (let i = startIdx + 1; i <= endIdx; i++) {
+    const prev = prices[i - 1][fund];
+    const cur = prices[i][fund];
+    if (prev == null || cur == null || prev === 0) continue;
+    out.push(((cur - prev) / prev) * 100);
+  }
+  return out;
+}
+
+/** Sample standard deviation (n-1). Returns null for fewer than 2 points. */
+function stdDev(values) {
+  if (!values || values.length < 2) return null;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
+/**
+ * "Sharpe-style" ratio per the TSP-specific convention:
+ *   (fund trailing return - G Fund trailing return) / stdev(fund's daily
+ *   returns over the same window)
+ * NOT annualized — this is a relative-strength-vs-risk score, not a
+ * textbook Sharpe ratio. Returns null if there isn't enough data.
+ */
+function sharpeStyleRatio(prices, fund, asOfIndex, windowMonths) {
+  const startIdx = windowStartIndex(prices, asOfIndex, windowMonths);
+  if (startIdx === null) return null;
+  const fundReturn = trailingReturnPct(prices, fund, asOfIndex, windowMonths);
+  const gReturn = trailingReturnPct(prices, RISK_FREE_FUND, asOfIndex, windowMonths);
+  if (fundReturn == null || gReturn == null) return null;
+  const sd = stdDev(dailyReturns(prices, fund, startIdx, asOfIndex));
+  if (!sd) return null;
+  return (fundReturn - gReturn) / sd;
+}
+
+/** Largest peak-to-trough % decline for `fund` within [startIdx, asOfIndex]. */
+function maxDrawdownPct(prices, fund, startIdx, asOfIndex) {
+  let peak = -Infinity;
+  let worst = 0;
+  for (let i = startIdx; i <= asOfIndex; i++) {
+    const price = prices[i][fund];
+    if (price == null) continue;
+    if (price > peak) peak = price;
+    if (peak > 0) {
+      const dd = ((peak - price) / peak) * 100;
+      if (dd > worst) worst = dd;
+    }
+  }
+  return worst;
+}
+
+function maxDrawdownForWindow(prices, fund, asOfIndex, windowMonths) {
+  const startIdx = windowStartIndex(prices, asOfIndex, windowMonths);
+  if (startIdx === null) return null;
+  return maxDrawdownPct(prices, fund, startIdx, asOfIndex);
+}
+
+/** Trailing N-trading-day simple moving average of `fund`, ending at asOfIndex. */
+function movingAverage(prices, fund, asOfIndex, n) {
+  const startIdx = asOfIndex - n + 1;
+  if (startIdx < 0) return null;
+  let sum = 0;
+  let count = 0;
+  for (let i = startIdx; i <= asOfIndex; i++) {
+    const price = prices[i][fund];
+    if (price == null) return null;
+    sum += price;
+    count++;
+  }
+  return count === n ? sum / n : null;
+}
+
+/** Trend filter: is current price above its own trailing N-day moving average? */
+function trendFilterPass(prices, fund, asOfIndex, n = 50) {
+  const ma = movingAverage(prices, fund, asOfIndex, n);
+  const price = prices[asOfIndex][fund];
+  if (ma == null || price == null) return null;
+  return price > ma;
+}
+
+/**
+ * Cumulative trailing-return series for `fund` across the window, rebased
+ * to 0% at the window start — what the RotationChart plots.
+ */
+function cumulativeReturnSeries(prices, fund, asOfIndex, windowMonths) {
+  const startIdx = windowStartIndex(prices, asOfIndex, windowMonths);
+  if (startIdx === null) return [];
+  const basePrice = prices[startIdx][fund];
+  if (basePrice == null) return [];
+  const out = [];
+  for (let i = startIdx; i <= asOfIndex; i++) {
+    const price = prices[i][fund];
+    if (price == null) continue;
+    out.push({ date: prices[i].date, returnPct: ((price - basePrice) / basePrice) * 100 });
+  }
+  return out;
+}
+
+/**
+ * Rank the stock/bond funds (C, S, I, F — G is the risk-free benchmark, not
+ * ranked against itself) by trailing return for `windowMonths`, richest
+ * metrics attached to each row. Sorted descending by trailing return.
+ */
+function rankFunds(prices, asOfIndex, windowMonths, { maDays = 50, rankableFunds = ['C', 'S', 'I', 'F'] } = {}) {
+  const rows = rankableFunds.map((fund) => ({
+    fund,
+    trailingReturnPct: trailingReturnPct(prices, fund, asOfIndex, windowMonths),
+    sharpeStyleRatio: sharpeStyleRatio(prices, fund, asOfIndex, windowMonths),
+    maxDrawdownPct: maxDrawdownForWindow(prices, fund, asOfIndex, windowMonths),
+    trendPass: trendFilterPass(prices, fund, asOfIndex, maDays),
+    price: prices[asOfIndex][fund],
+  }));
+  rows.sort((a, b) => (b.trailingReturnPct ?? -Infinity) - (a.trailingReturnPct ?? -Infinity));
+  return rows;
+}
+
+module.exports = {
+  CORE_FUNDS,
+  RISK_FREE_FUND,
+  parseISO,
+  formatISO,
+  subtractMonthsISO,
+  findIndexOnOrBefore,
+  windowStartIndex,
+  trailingReturnPct,
+  dailyReturns,
+  stdDev,
+  sharpeStyleRatio,
+  maxDrawdownPct,
+  maxDrawdownForWindow,
+  movingAverage,
+  trendFilterPass,
+  cumulativeReturnSeries,
+  rankFunds,
+};

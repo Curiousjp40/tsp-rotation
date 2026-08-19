@@ -17,25 +17,27 @@ export default function SignalLog({ signalLog, onMarkActed }) {
             <tr>
               <th>Date</th>
               <th>State</th>
-              <th>Current → Target</th>
+              <th>Leader</th>
               <th className="num">Edge</th>
+              <th>Proposed move</th>
               <th>Acted on?</th>
             </tr>
           </thead>
           <tbody>
             {signalLog.length === 0 && (
-              <tr className="empty-row"><td colSpan={5}>No signals logged yet — use "Log this signal to history" on an actionable signal above.</td></tr>
+              <tr className="empty-row"><td colSpan={6}>No signals logged yet — use "Log this signal to history" on an actionable signal above.</td></tr>
             )}
             {signalLog.map((e) => (
               <tr key={e.id}>
                 <td>{e.date}</td>
                 <td><span className={`badge badge-state state-${e.state}`}>{e.state.replace(/-/g, ' ')}</span></td>
-                <td>
-                  <span className={`badge badge-fund fund-${e.currentHolding}`}>{e.currentHolding}</span>
-                  {' → '}
-                  <span className={`badge badge-fund fund-${e.target}`}>{e.target}</span>
-                </td>
+                <td><span className={`badge badge-fund fund-${e.leaderFund}`}>{e.leaderFund}</span></td>
                 <td className="num">{fmtPp(e.edgePct)}</td>
+                <td>
+                  {e.laggard
+                    ? `${e.tiltAmount?.toFixed(1) ?? ''}pp ${e.laggard} → ${e.leaderFund}`
+                    : `move to 100% ${e.leaderFund}`}
+                </td>
                 <td>
                   <label className="toggle-switch">
                     <input type="checkbox" checked={!!e.actedOn} onChange={(ev) => onMarkActed(e.id, ev.target.checked)} />
@@ -48,8 +50,9 @@ export default function SignalLog({ signalLog, onMarkActed }) {
         </table>
       </div>
       <div className="chart-legend-note">
-        This is a track record, not an execution log — it becomes the input for validating the backtest against what actually would have
-        happened. Nothing here executes a trade; do that manually on tsp.gov, then log the real transfer in the tracker above.
+        This is a track record, not an execution log — it becomes the input for validating the backtest against what actually
+        would have happened. Nothing here executes a trade; do that manually on tsp.gov, then log the real allocation in the
+        card above.
       </div>
     </div>
   );

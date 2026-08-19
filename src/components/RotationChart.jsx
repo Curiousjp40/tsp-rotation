@@ -1,19 +1,24 @@
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine,
 } from 'recharts';
-import { cumulativeReturnSeries } from '../lib/metrics';
+import { cumulativeReturnSeries, blendedValueSeries, windowStartIndex } from '../lib/metrics';
 
 const FUND_COLORS = { C: 'var(--fund-c)', S: 'var(--fund-s)', I: 'var(--fund-i)', F: 'var(--fund-f)', G: 'var(--fund-g)' };
 const FUND_ORDER = ['C', 'S', 'I', 'F', 'G'];
+const BLEND_COLOR = 'var(--navy)';
 
-function buildChartData(prices, asOfIndex, windowMonths) {
+function buildChartData(prices, asOfIndex, windowMonths, allocation) {
   const perFund = {};
   for (const fund of FUND_ORDER) {
     perFund[fund] = cumulativeReturnSeries(prices, fund, asOfIndex, windowMonths);
   }
+  const startIdx = windowStartIndex(prices, asOfIndex, windowMonths);
+  const blendSeries = startIdx == null ? [] : blendedValueSeries(prices, allocation, startIdx, asOfIndex);
+  const blendByDate = new Map(blendSeries.map((p) => [p.date, (p.value - 1) * 100]));
+
   const dates = perFund.C.map((row) => row.date);
   return dates.map((date, i) => {
-    const point = { date };
+    const point = { date, BLEND: blendByDate.get(date) ?? null };
     for (const fund of FUND_ORDER) {
       point[fund] = perFund[fund][i]?.returnPct ?? null;
     }
@@ -26,8 +31,8 @@ function formatDate(d) {
   return `${m}/${day}`;
 }
 
-export default function RotationChart({ prices, asOfIndex, windowMonths, currentHolding }) {
-  const data = buildChartData(prices, asOfIndex, windowMonths);
+export default function RotationChart({ prices, asOfIndex, windowMonths, allocation }) {
+  const data = buildChartData(prices, asOfIndex, windowMonths, allocation);
 
   return (
     <div className="card">
@@ -52,17 +57,26 @@ export default function RotationChart({ prices, asOfIndex, windowMonths, current
                 key={fund}
                 type="monotone"
                 dataKey={fund}
-                name={`${fund} Fund${fund === currentHolding ? ' (current)' : ''}`}
+                name={`${fund} Fund`}
                 stroke={FUND_COLORS[fund]}
-                strokeWidth={fund === currentHolding ? 3.5 : 1.5}
+                strokeWidth={1.5}
                 dot={false}
                 connectNulls
               />
             ))}
+            <Line
+              type="monotone"
+              dataKey="BLEND"
+              name="Your blend (current)"
+              stroke={BLEND_COLOR}
+              strokeWidth={3.5}
+              dot={false}
+              connectNulls
+            />
           </LineChart>
         </ResponsiveContainer>
       </div>
-      <div className="chart-legend-note">Your current holding is drawn thicker. Prices are once-daily closing NAVs — there's no intraday movement to show.</div>
+      <div className="chart-legend-note">Your blended allocation is drawn thickest. Prices are once-daily closing NAVs — there's no intraday movement to show.</div>
     </div>
   );
 }

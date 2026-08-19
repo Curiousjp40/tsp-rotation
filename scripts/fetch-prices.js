@@ -84,6 +84,126 @@ function normalize(csvText) {
   return deduped;
 }
 
+// ---- integrity checks ------------------------------------------------
+//
+// A monthly-table source (year/month columns) can look current when it's
+// actually only through the last CLOSED month — a "YTD" figure read from
+// one of those can understate current performance by several points during
+// a strong run. That's exactly what happened once already while building
+// this: a spot-check against a monthly-table site under-reported July's
+// actual YTD numbers. The daily-CSV approach avoids that by construction,
+// but a bad pull or a broken parse could still silently feed wrong numbers
+// downstream — these checks exist to catch that instead of staying quiet.
+
+/**
+ * Dated, one-time reference points spot-checked by hand against an
+ * independent source at the time they were added. Not a live feed — this
+ * is exactly the "monthly-table site, verified manually" kind of check the
+ * spec calls for, automated so it re-runs on every future pull instead of
+ * needing another manual check. Add more over time the same way.
+ */
+const REFERENCE_CHECKPOINTS = [
+  {
+    label: '2026 YTD through 2026-07-31',
+    baselineDate: '2025-12-31', // prior year-end close
+    asOf: '2026-07-31',
+    expectedPct: { C: 10.13, S: 13.52, I: 15.35 },
+    tolerancePp: 0.15,
+  },
+];
+
+function findOnOrBefore(prices, targetDate) {
+  let result = null;
+  for (const row of prices) {
+    if (row.date > targetDate) break;
+    result = row;
+  }
+  return result;
+}
+
+/**
+ * Guards the arithmetic in this script itself: compounding each fund's
+ * day-over-day returns must reproduce its direct start/end price ratio.
+ * This is a regression guard against a future bug in this file, not a
+ * check against the source data (a telescoping product is tautologically
+ * equal to the endpoints — it can't detect a source-side gap or bad row on
+ * its own; REFERENCE_CHECKPOINTS below is what actually verifies against
+ * an external number).
+ */
+function checkCompoundingConsistency(prices) {
+  const errors = [];
+  for (const fund of CORE_FUNDS) {
+    let compounded = 1;
+    for (let i = 1; i < prices.length; i++) {
+      compounded *= prices[i][fund] / prices[i - 1][fund];
+    }
+    const direct = prices[prices.length - 1][fund] / prices[0][fund];
+    const relError = Math.abs(compounded - direct) / direct;
+    if (relError > 1e-6) {
+      errors.push(`${fund}: compounded daily returns (${compounded.toFixed(6)}) don't match direct return (${direct.toFixed(6)})`);
+    }
+  }
+  return errors;
+}
+
+/** Flags unexpectedly large gaps between consecutive trading dates (normal holiday gaps are a few days). */
+function checkDateGaps(prices) {
+  const warnings = [];
+  for (let i = 1; i < prices.length; i++) {
+    const days = (new Date(`${prices[i].date}T00:00:00Z`) - new Date(`${prices[i - 1].date}T00:00:00Z`)) / 86400000;
+    if (days > 6) {
+      warnings.push(`Gap of ${days} days between ${prices[i - 1].date} and ${prices[i].date} — longer than a normal holiday weekend.`);
+    }
+  }
+  return warnings;
+}
+
+/** Flags implausible single-day moves (e.g. a decimal-shift parse bug), well outside even the worst real crash days. */
+function checkDailyMoveSanity(prices) {
+  const warnings = [];
+  const THRESHOLD_PCT = 15;
+  for (const fund of CORE_FUNDS) {
+    for (let i = 1; i < prices.length; i++) {
+      const change = ((prices[i][fund] - prices[i - 1][fund]) / prices[i - 1][fund]) * 100;
+      if (Math.abs(change) > THRESHOLD_PCT) {
+        warnings.push(`${fund} moved ${change.toFixed(1)}% on ${prices[i].date} — check for a parse/decimal error.`);
+      }
+    }
+  }
+  return warnings;
+}
+
+function checkReferenceCheckpoints(prices) {
+  const warnings = [];
+  for (const cp of REFERENCE_CHECKPOINTS) {
+    const baseline = findOnOrBefore(prices, cp.baselineDate);
+    const asOfRow = findOnOrBefore(prices, cp.asOf);
+    if (!baseline || !asOfRow || asOfRow.date < cp.asOf) {
+      continue; // data doesn't cover this checkpoint yet (or predates it) — nothing to check
+    }
+    for (const [fund, expectedPct] of Object.entries(cp.expectedPct)) {
+      const actualPct = ((asOfRow[fund] - baseline[fund]) / baseline[fund]) * 100;
+      const diff = Math.abs(actualPct - expectedPct);
+      if (diff > cp.tolerancePp) {
+        warnings.push(
+          `${cp.label}: ${fund} computed ${actualPct.toFixed(2)}% vs. reference ${expectedPct.toFixed(2)}% (off by ${diff.toFixed(2)}pp, tolerance ${cp.tolerancePp}pp)`
+        );
+      }
+    }
+  }
+  return warnings;
+}
+
+function runIntegrityChecks(prices) {
+  const errors = checkCompoundingConsistency(prices);
+  const warnings = [
+    ...checkDateGaps(prices),
+    ...checkDailyMoveSanity(prices),
+    ...checkReferenceCheckpoints(prices),
+  ];
+  return { errors, warnings };
+}
+
 async function main() {
   console.log(`Fetching ${SOURCE_URL} ...`);
   const csvText = await fetchCSV(SOURCE_URL);
@@ -93,11 +213,20 @@ async function main() {
     throw new Error('Parsed zero valid price rows — refusing to write an empty dataset.');
   }
 
+  const { errors, warnings } = runIntegrityChecks(prices);
+  if (errors.length > 0) {
+    throw new Error(`Integrity check failed, refusing to write:\n  ${errors.join('\n  ')}`);
+  }
+  if (warnings.length > 0) {
+    console.warn(`Integrity warnings (non-fatal, written into the output):\n  ${warnings.join('\n  ')}`);
+  }
+
   const output = {
     asOf: prices[prices.length - 1].date,
     source: SOURCE_URL,
     fetchedAt: new Date().toISOString(),
     funds: CORE_FUNDS,
+    integrityWarnings: warnings,
     prices,
   };
 

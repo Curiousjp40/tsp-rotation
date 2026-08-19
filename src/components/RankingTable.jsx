@@ -5,7 +5,7 @@ function fmtRatio(v) {
   return v == null ? '—' : v.toFixed(2);
 }
 
-export default function RankingTable({ ranking, currentHolding, windowMonths }) {
+export default function RankingTable({ ranking, blended, allocation, windowMonths }) {
   const leaderFund = ranking[0]?.fund;
 
   return (
@@ -25,21 +25,26 @@ export default function RankingTable({ ranking, currentHolding, windowMonths }) 
             </tr>
           </thead>
           <tbody>
+            <tr className="current-row" style={{ background: 'var(--info-bg)' }}>
+              <td>
+                <span className="badge badge-state" style={{ background: 'var(--navy)', color: 'var(--white)' }}>YOUR BLEND</span>
+                <span className="stat-note"> ({allocation.C}/{allocation.S}/{allocation.I}/{allocation.F}/{allocation.G} C/S/I/F/G)</span>
+              </td>
+              <td className={`num ${blended.trailingReturnPct >= 0 ? 'pos' : 'neg'}`}>{fmtPct(blended.trailingReturnPct)}</td>
+              <td className="num">{fmtRatio(blended.sharpeStyleRatio)}</td>
+              <td className="num neg">{blended.maxDrawdownPct == null ? '—' : `-${blended.maxDrawdownPct.toFixed(2)}%`}</td>
+              <td className="num">
+                {blended.trendPass == null ? '—' : blended.trendPass ? <span className="pass">Above ✓</span> : <span className="fail">Below ✗</span>}
+              </td>
+            </tr>
             {ranking.map((row) => (
-              <tr
-                key={row.fund}
-                className={[
-                  row.fund === leaderFund ? 'leader-row' : '',
-                  row.fund === currentHolding ? 'current-row' : '',
-                ].join(' ').trim()}
-              >
+              <tr key={row.fund} className={row.fund === leaderFund ? 'leader-row' : ''}>
                 <td>
                   <span className={`badge badge-fund fund-${row.fund}`}>{row.fund}</span>
                   {row.fund === leaderFund && ' 🏆'}
-                  {row.fund === currentHolding && <span className="stat-note"> (current)</span>}
                 </td>
                 <td className={`num ${row.trailingReturnPct >= 0 ? 'pos' : 'neg'}`}>{fmtPct(row.trailingReturnPct)}</td>
-                <td className="num">{fmtRatio(row.sharpeStyleRatio)}</td>
+                <td className="num">{row.fund === 'G' ? '—' : fmtRatio(row.sharpeStyleRatio)}</td>
                 <td className="num neg">{row.maxDrawdownPct == null ? '—' : `-${row.maxDrawdownPct.toFixed(2)}%`}</td>
                 <td className="num">
                   {row.trendPass == null ? '—' : row.trendPass ? <span className="pass">Above ✓</span> : <span className="fail">Below ✗</span>}
@@ -50,8 +55,12 @@ export default function RankingTable({ ranking, currentHolding, windowMonths }) 
         </table>
       </div>
       <div className="chart-legend-note">
-        Sharpe-style = (fund return − G Fund return) ÷ stdev of the fund's daily returns over the window — a relative-strength-vs-risk
-        score, not an annualized Sharpe ratio. A fund can lead on return while failing the trend filter; that combination is shown as-is, not hidden.
+        Your blend is pinned above, not competing for the top spot — it's the "current position" row, not one of the five
+        ranked funds. G Fund's Sharpe-style is shown as — (comparing G to itself isn't meaningful) but its return and
+        drawdown are shown for direct comparison when evaluating a move toward safety. Sharpe-style =
+        (return − G Fund return) ÷ stdev of daily returns over the window — a relative-strength-vs-risk score, not an
+        annualized Sharpe ratio. A fund can lead on return while failing the trend filter; that combination is shown as-is,
+        not hidden.
       </div>
     </div>
   );

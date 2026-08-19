@@ -1,8 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import './styles.css';
-import { evaluateRotationSignal } from './lib/signals';
-import { findIndexOnOrBefore } from './lib/metrics';
+import { evaluateRebalanceSignal } from './lib/signals';
+import {
+  findIndexOnOrBefore, blendedReturnPct, blendedSharpeStyleRatio,
+  blendedMaxDrawdownForWindow, blendedTrendFilterPass,
+} from './lib/metrics';
 import * as storage from './lib/storage';
+import AllocationInput from './components/AllocationInput';
 import SettingsPanel from './components/SettingsPanel';
 import TransferTracker from './components/TransferTracker';
 import RegimeToggle from './components/RegimeToggle';
@@ -10,14 +14,15 @@ import SignalPanel from './components/SignalPanel';
 import RotationChart from './components/RotationChart';
 import RankingTable from './components/RankingTable';
 import SignalLog from './components/SignalLog';
+import BacktestSummary from './components/BacktestSummary';
 
 export default function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
   const [settings, setSettingsState] = useState(storage.getSettings());
-  const [currentHolding, setCurrentHoldingState] = useState(storage.getCurrentHolding());
-  const [regimeOff, setRegimeOffState] = useState(storage.getRegimeOff());
+  const [allocation, setAllocationState] = useState(storage.getAllocation());
+  const [regime, setRegimeState] = useState(storage.getRegime());
   const [transferLog, setTransferLog] = useState(storage.getTransferLog());
   const [signalLog, setSignalLog] = useState(storage.getSignalLog());
 
@@ -35,22 +40,21 @@ export default function App() {
     setSettingsState(storage.setSettings(partial));
   }, []);
 
-  const handleHoldingChange = useCallback((fund) => {
-    storage.setCurrentHolding(fund);
-    setCurrentHoldingState(fund);
+  const handleAllocationChange = useCallback((next) => {
+    setAllocationState(storage.setAllocation(next));
   }, []);
 
   const handleRegimeChange = useCallback((val) => {
-    storage.setRegimeOff(val);
-    setRegimeOffState(val);
+    setRegimeState(storage.setRegimeOff(val));
   }, []);
 
-  const handleLogTransfer = useCallback(({ date, toFund }) => {
-    setTransferLog(storage.addTransferLogEntry({ date, toFund }));
-    // A real transfer means the current holding actually changed on tsp.gov —
-    // reflect that here so the dashboard's "current holding" stays honest.
-    storage.setCurrentHolding(toFund);
-    setCurrentHoldingState(toFund);
+  const handleLogTransfer = useCallback(({ date, allocation: alloc }) => {
+    const result = storage.addTransferLogEntry({ date, allocation: alloc });
+    if (result.ok) {
+      setTransferLog(result.log);
+      setAllocationState(storage.getAllocation());
+    }
+    return result;
   }, []);
 
   const handleLogSignal = useCallback((signal) => {
@@ -58,10 +62,13 @@ export default function App() {
       date: signal.date,
       state: signal.state,
       reason: signal.reason,
-      currentHolding: signal.currentHolding,
-      target: signal.target,
+      leaderFund: signal.leader?.fund,
+      blendedReturn: signal.blendedReturn,
       edgePct: signal.edgePct,
       windowMonths: signal.windowMonths,
+      laggard: signal.laggard,
+      tiltAmount: signal.tiltAmount,
+      mode: signal.mode,
     }));
   }, []);
 
@@ -76,34 +83,42 @@ export default function App() {
 
   const asOfIndex = data ? data.prices.length - 1 : null;
 
-  // Best-effort "when did we enter this position" for the standing defensive
-  // rule — the most recent logged transfer INTO the current holding. If the
-  // user never logged one (e.g. they just set their holding manually),
+  // Best-effort "when was this allocation last set" for the standing
+  // defensive rule — the most recent logged transfer. If none exists yet,
   // signals.js falls back to the plain recent-lookback cap.
-  const holdingSinceIndex = useMemo(() => {
-    if (!data) return null;
-    const entries = transferLog
-      .filter((e) => e.toFund === currentHolding)
-      .sort((a, b) => (a.date < b.date ? 1 : -1));
-    if (entries.length === 0) return null;
-    const idx = findIndexOnOrBefore(data.prices, entries[0].date);
+  const allocationSinceIndex = useMemo(() => {
+    if (!data || transferLog.length === 0) return null;
+    const latest = [...transferLog].sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    const idx = findIndexOnOrBefore(data.prices, latest.date);
     return idx < 0 ? null : idx;
-  }, [data, transferLog, currentHolding]);
+  }, [data, transferLog]);
 
   const signal = useMemo(() => {
     if (!data || asOfIndex == null) return null;
-    return evaluateRotationSignal(data.prices, asOfIndex, {
+    return evaluateRebalanceSignal(data.prices, asOfIndex, {
       windowMonths: settings.windowMonths,
       marginPct: settings.marginPct,
-      currentHolding,
+      allocation,
       transfersUsedThisMonth,
-      regimeOff,
+      regimeOff: regime.value,
       recentPeakLookbackDays: settings.recentPeakLookbackDays,
       drawdownTriggerPct: settings.drawdownTriggerPct,
       maDays: settings.maDays,
-      holdingSinceIndex,
+      allocationSinceIndex,
+      mode: settings.mode,
+      tiltPct: settings.tiltPct,
     });
-  }, [data, asOfIndex, settings, currentHolding, transfersUsedThisMonth, regimeOff, holdingSinceIndex]);
+  }, [data, asOfIndex, settings, allocation, transfersUsedThisMonth, regime, allocationSinceIndex]);
+
+  const blended = useMemo(() => {
+    if (!data || asOfIndex == null) return null;
+    return {
+      trailingReturnPct: blendedReturnPct(data.prices, allocation, asOfIndex, settings.windowMonths),
+      sharpeStyleRatio: blendedSharpeStyleRatio(data.prices, allocation, asOfIndex, settings.windowMonths),
+      maxDrawdownPct: blendedMaxDrawdownForWindow(data.prices, allocation, asOfIndex, settings.windowMonths),
+      trendPass: blendedTrendFilterPass(data.prices, allocation, asOfIndex, settings.maDays),
+    };
+  }, [data, asOfIndex, allocation, settings.windowMonths, settings.maDays]);
 
   return (
     <div className="app">
@@ -115,7 +130,7 @@ export default function App() {
       </header>
 
       <main className="main">
-        <h1 className="page-title">C / S / I / F / G rotation monitor</h1>
+        <h1 className="page-title">C / S / I / F / G rebalancing monitor</h1>
         <p className="page-sub">
           Read-only monitoring and decision support. Every real reallocation still happens manually on tsp.gov —
           this dashboard never executes a trade.
@@ -129,22 +144,18 @@ export default function App() {
         )}
         {!data && !error && <div className="card">Loading price data…</div>}
 
-        {data && signal && (
+        {data && signal && blended && (
           <>
+            <AllocationInput
+              allocation={allocation}
+              onAllocationChange={handleAllocationChange}
+              onLogTransfer={handleLogTransfer}
+            />
+
             <div className="grid-top">
-              <SettingsPanel
-                settings={settings}
-                onSettingsChange={handleSettingsChange}
-                currentHolding={currentHolding}
-                onHoldingChange={handleHoldingChange}
-              />
-              <TransferTracker
-                transferLog={transferLog}
-                transfersUsed={transfersUsedThisMonth}
-                transfersRemaining={signal.transfersRemaining}
-                onLogTransfer={handleLogTransfer}
-              />
-              <RegimeToggle regimeOff={regimeOff} onChange={handleRegimeChange} />
+              <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} />
+              <TransferTracker transferLog={transferLog} transfersUsed={transfersUsedThisMonth} />
+              <RegimeToggle regime={regime} onChange={handleRegimeChange} />
             </div>
 
             <SignalPanel signal={signal} onLogSignal={handleLogSignal} />
@@ -153,10 +164,12 @@ export default function App() {
               prices={data.prices}
               asOfIndex={asOfIndex}
               windowMonths={settings.windowMonths}
-              currentHolding={currentHolding}
+              allocation={allocation}
             />
 
-            <RankingTable ranking={signal.ranking} currentHolding={currentHolding} windowMonths={settings.windowMonths} />
+            <RankingTable ranking={signal.ranking} blended={blended} allocation={allocation} windowMonths={settings.windowMonths} />
+
+            <BacktestSummary />
 
             <SignalLog signalLog={signalLog} onMarkActed={handleMarkActed} />
           </>
@@ -166,8 +179,8 @@ export default function App() {
       <footer className="footer">
         Decision-support and record-keeping only — not a guarantee of performance, not investment advice, and it does not place
         trades. See <a href="https://www.tsp.gov" target="_blank" rel="noreferrer">tsp.gov</a> to actually reallocate.
-        Run the backtest (<code>npm run backtest</code>) across multiple market regimes, and paper-trade signals for 30+ days,
-        before treating any live signal here as real.
+        Run the backtest (<code>npm run backtest -- --save</code>) across multiple market regimes, and paper-trade signals
+        for 30+ days, before treating any live signal here as real.
       </footer>
     </div>
   );

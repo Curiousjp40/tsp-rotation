@@ -114,20 +114,26 @@ function sharpeStyleRatio(prices, fund, asOfIndex, windowMonths) {
   return (fundReturn - gReturn) / sd;
 }
 
-/** Largest peak-to-trough % decline for `fund` within [startIdx, asOfIndex]. */
-function maxDrawdownPct(prices, fund, startIdx, asOfIndex) {
+/** Largest peak-to-trough % decline across a plain array of values (any series, any base). */
+function maxDrawdownFromSeries(values) {
   let peak = -Infinity;
   let worst = 0;
-  for (let i = startIdx; i <= asOfIndex; i++) {
-    const price = prices[i][fund];
-    if (price == null) continue;
-    if (price > peak) peak = price;
+  for (const v of values) {
+    if (v == null) continue;
+    if (v > peak) peak = v;
     if (peak > 0) {
-      const dd = ((peak - price) / peak) * 100;
+      const dd = ((peak - v) / peak) * 100;
       if (dd > worst) worst = dd;
     }
   }
   return worst;
+}
+
+/** Largest peak-to-trough % decline for `fund` within [startIdx, asOfIndex]. */
+function maxDrawdownPct(prices, fund, startIdx, asOfIndex) {
+  const values = [];
+  for (let i = startIdx; i <= asOfIndex; i++) values.push(prices[i][fund]);
+  return maxDrawdownFromSeries(values);
 }
 
 function maxDrawdownForWindow(prices, fund, asOfIndex, windowMonths) {
@@ -177,12 +183,126 @@ function cumulativeReturnSeries(prices, fund, asOfIndex, windowMonths) {
   return out;
 }
 
+// ---- blended allocation math ---------------------------------------------
+//
+// A TSP allocation is a set of percentages across the five funds summing to
+// 100, not a single fund. For a buy-and-hold blend (no daily rebalancing —
+// real TSP accounts aren't auto-rebalanced either), the blended % return is
+// EXACTLY the weight-averaged sum of each fund's own % return: if you put
+// weight w_i into fund i at the start, value at any later point is
+// Σ w_i·(1+r_i) = Σw_i + Σw_i·r_i = 1 + Σw_i·r_i (weights sum to 1), so
+// blended return = Σ w_i·r_i exactly, not an approximation.
+
+/** Convert an {C,S,I,F,G} allocation (percentages, may omit funds) to fractions summing to <=1. */
+function weightsFromAllocation(allocation) {
+  const weights = {};
+  for (const fund of CORE_FUNDS) {
+    weights[fund] = (allocation?.[fund] ?? 0) / 100;
+  }
+  return weights;
+}
+
+/** Funds actually held (weight > 0) in an allocation. */
+function heldFunds(allocation, funds = CORE_FUNDS) {
+  return funds.filter((f) => (allocation?.[f] ?? 0) > 0);
+}
+
 /**
- * Rank the stock/bond funds (C, S, I, F — G is the risk-free benchmark, not
- * ranked against itself) by trailing return for `windowMonths`, richest
- * metrics attached to each row. Sorted descending by trailing return.
+ * Blended trailing return for `allocation` over `windowMonths`, ending at
+ * asOfIndex. Returns null if any held fund lacks enough history for the window.
  */
-function rankFunds(prices, asOfIndex, windowMonths, { maDays = 50, rankableFunds = ['C', 'S', 'I', 'F'] } = {}) {
+function blendedReturnPct(prices, allocation, asOfIndex, windowMonths) {
+  const weights = weightsFromAllocation(allocation);
+  let total = 0;
+  for (const fund of heldFunds(allocation)) {
+    const r = trailingReturnPct(prices, fund, asOfIndex, windowMonths);
+    if (r == null) return null;
+    total += weights[fund] * r;
+  }
+  return total;
+}
+
+/**
+ * Blended portfolio value series for `allocation` across [fromIndex, toIndex],
+ * rebased to 1.0 at fromIndex. This is what actually gets charted, and what
+ * blended drawdown/trend-filter/Sharpe-style are computed from — unlike
+ * blendedReturnPct (a single window-end number), this needs the full path.
+ */
+function blendedValueSeries(prices, allocation, fromIndex, toIndex) {
+  const weights = weightsFromAllocation(allocation);
+  const held = heldFunds(allocation);
+  if (held.length === 0) return [];
+  const basePrices = {};
+  for (const fund of held) {
+    const p = prices[fromIndex]?.[fund];
+    if (p == null) return [];
+    basePrices[fund] = p;
+  }
+  const out = [];
+  for (let i = fromIndex; i <= toIndex; i++) {
+    let value = 1;
+    let ok = true;
+    for (const fund of held) {
+      const price = prices[i][fund];
+      if (price == null) { ok = false; break; }
+      value += weights[fund] * (price / basePrices[fund] - 1);
+    }
+    if (ok) out.push({ date: prices[i].date, value });
+  }
+  return out;
+}
+
+/** Day-over-day % returns from a plain {value}[] series (e.g. blendedValueSeries). */
+function dailyReturnsFromSeries(series) {
+  const out = [];
+  for (let i = 1; i < series.length; i++) {
+    const prev = series[i - 1].value;
+    const cur = series[i].value;
+    if (prev === 0) continue;
+    out.push(((cur - prev) / prev) * 100);
+  }
+  return out;
+}
+
+/** Blended max drawdown over a trailing window ending at asOfIndex. */
+function blendedMaxDrawdownForWindow(prices, allocation, asOfIndex, windowMonths) {
+  const startIdx = windowStartIndex(prices, asOfIndex, windowMonths);
+  if (startIdx === null) return null;
+  const series = blendedValueSeries(prices, allocation, startIdx, asOfIndex);
+  if (series.length === 0) return null;
+  return maxDrawdownFromSeries(series.map((p) => p.value));
+}
+
+/** Blended "Sharpe-style" ratio, same convention as sharpeStyleRatio: (blend - G) / stdev(blend's daily returns). */
+function blendedSharpeStyleRatio(prices, allocation, asOfIndex, windowMonths) {
+  const startIdx = windowStartIndex(prices, asOfIndex, windowMonths);
+  if (startIdx === null) return null;
+  const blendReturn = blendedReturnPct(prices, allocation, asOfIndex, windowMonths);
+  const gReturn = trailingReturnPct(prices, RISK_FREE_FUND, asOfIndex, windowMonths);
+  if (blendReturn == null || gReturn == null) return null;
+  const series = blendedValueSeries(prices, allocation, startIdx, asOfIndex);
+  const sd = stdDev(dailyReturnsFromSeries(series));
+  if (!sd) return null;
+  return (blendReturn - gReturn) / sd;
+}
+
+/** Is the blend's current value above its own trailing N-day moving average? */
+function blendedTrendFilterPass(prices, allocation, asOfIndex, n = 50) {
+  const fromIndex = asOfIndex - n + 1;
+  if (fromIndex < 0) return null;
+  const series = blendedValueSeries(prices, allocation, fromIndex, asOfIndex);
+  if (series.length !== n) return null;
+  const ma = series.reduce((sum, p) => sum + p.value, 0) / n;
+  return series[series.length - 1].value > ma;
+}
+
+/**
+ * Rank the five funds (including G — G is a legitimate leader during a
+ * selloff, that's the whole point of the safe-harbor case) by trailing
+ * return for `windowMonths`, richest metrics attached to each row. Sorted
+ * descending by trailing return.
+ */
+function rankFunds(prices, asOfIndex, windowMonths, { maDays = 50, rankableFunds = CORE_FUNDS } = {}) {
   const rows = rankableFunds.map((fund) => ({
     fund,
     trailingReturnPct: trailingReturnPct(prices, fund, asOfIndex, windowMonths),
@@ -207,10 +327,19 @@ module.exports = {
   dailyReturns,
   stdDev,
   sharpeStyleRatio,
+  maxDrawdownFromSeries,
   maxDrawdownPct,
   maxDrawdownForWindow,
   movingAverage,
   trendFilterPass,
   cumulativeReturnSeries,
+  weightsFromAllocation,
+  heldFunds,
+  blendedReturnPct,
+  blendedValueSeries,
+  dailyReturnsFromSeries,
+  blendedMaxDrawdownForWindow,
+  blendedSharpeStyleRatio,
+  blendedTrendFilterPass,
   rankFunds,
 };

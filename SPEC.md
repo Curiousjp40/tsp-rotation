@@ -1,17 +1,26 @@
-# TSP Fund Rotation Dashboard — Build Spec
+# TSP Fund Rotation Dashboard — Build Spec (v2)
 
-> Original project brief, kept for reference across sessions. Note: a few
-> details were superseded during the build — see the "Deviations from this
-> spec" section at the bottom and [README.md](./README.md) for what was
-> actually built and why.
+> Current project brief, kept for reference across sessions. v2 supersedes v1 (kept below as an
+> appendix) — the core change is the holding model: a weighted allocation across funds instead
+> of a single selected fund. See "Deviations from this spec" right after this section, and
+> [README.md](./README.md), for what was actually built and why.
+
+## What changed since v1
+
+The first build got the TSP mechanics right (pricing, the transfer cap, the safe-harbor
+exception) and the additional metrics right (Sharpe-style, drawdown, trend filter, regime
+flag). But it modeled "current holding" as a single fund selected from a dropdown. Real TSP
+accounts, including the one this is built for, are usually a weighted mix across several funds
+at once, not 100% in any one fund. That single assumption touches almost everything downstream:
+the ranking comparison, the margin calculation, the drawdown trigger, the chart. This version
+rebuilds the holding model around a weighted allocation and fixes several smaller issues found
+while reviewing the first pass.
 
 ## 1. What this is
 
-A read-only monitoring and decision-support dashboard for Thrift Savings Plan (TSP) fund allocation. It tracks the C, S, I, F, and G funds, ranks them by trailing performance, and surfaces when a reallocation is worth considering, while respecting TSP's actual transfer rules. It does not execute trades. TSP has no public transaction API, so any real reallocation still happens manually on tsp.gov.
+A read-only monitoring and decision-support dashboard for Thrift Savings Plan (TSP) fund allocation. It tracks the C, S, I, F, and G funds, ranks them by trailing performance, and surfaces when rebalancing is worth considering, while respecting TSP's actual transfer rules. It does not execute trades. TSP has no public transaction API, so any real reallocation still happens manually on tsp.gov.
 
 ## 2. Ground-truth rules to encode correctly
-
-Get these right before anything else, the whole tool is built on top of them:
 
 * Pricing: TSP funds post one NAV per business day, calculated after market close. There is no intraday price movement to track.
 * Cutoff: reallocation requests submitted before 12:00pm ET execute at that day's closing price. Requests submitted after 12:00pm ET execute at the next business day's closing price.
@@ -21,52 +30,164 @@ Get these right before anything else, the whole tool is built on top of them:
    * S Fund: small/mid-cap US stock, tracks the Dow Jones US Completion TSM
    * I Fund: international stock, tracks MSCI EAFE
    * F Fund: US bonds, tracks the Bloomberg US Aggregate Bond Index
-   * G Fund: government securities, essentially flat and steadily accruing, treat as the risk-free rate, not a market-moving series
+   * G Fund: government securities, essentially flat and steadily accruing, treated as the risk-free rate, not a market-moving series
 
-## 3. Data source
+## 3. The holding model has to be a weighted allocation, not a single fund
 
-Use TSP's own published prices, not proxy ETFs, this is what makes the numbers accurate instead of approximate:
+This is the most important change in this version. A real TSP allocation is a set of percentages across the five funds that sum to 100, not a single selected fund. The current build's "Current holding" dropdown should be replaced with an allocation input: five percentage fields (C/S/I/F/G) that must sum to 100, pre-fillable and editable, structured the same way as TSP's own reallocation screen (percentage per fund, running total shown).
 
-* Official: tsp.gov/share-price-history (likely renders as an interactive chart, more work to scrape reliably)
-* Practical: tspfolio.com publishes a single CSV of daily closing prices for all five funds back to June 2003, this is the easier source to pull programmatically
+Example starting allocation to seed and test against: 50% C / 30% S / 20% I / 0% F / 0% G, total account value roughly $9,650.
 
-CORS note: fetching that CSV directly from the browser at runtime will likely fail, it's a cross-origin request to a third-party site with no guarantee of permissive CORS headers. Don't build this as a client-side fetch. Instead:
+From that allocation, the dashboard needs to compute and prominently display a blended return: the weighted sum of each fund's trailing return by its allocation percentage, for whatever lookback window is selected. This is the actual "how am I doing" number, and it should replace any single fund's return as the baseline the ranking table and signals compare against.
 
-* Set up a scheduled GitHub Actions workflow that fetches the source CSV server-side (no CORS issue from a CI runner), computes derived fields, and commits an updated JSON file into the repo (e.g. `/data/tsp-prices.json`)
-* The static site just reads that committed JSON at build/runtime, no live cross-origin calls needed
-* Store at minimum: date, and closing price for each of the five funds, per day
+Worked example to validate the calculation against (2026 YTD, through end of July): C +10.13%, S +13.52%, I +15.35%. A 50/30/20 C/S/I blend:
 
-Example workflow skeleton (adjust the cron time once you confirm when TSP/tspfolio actually post each day's price):
-
-```yaml
-name: Update TSP Prices
-on:
-  schedule:
-    - cron: "0 2 * * 2-6"   # ~9-10pm ET, Mon-Fri evenings
-  workflow_dispatch: {}
-jobs:
-  update:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm install
-      - run: node scripts/fetch-prices.js
-      - run: |
-          git config user.name "tsp-data-bot"
-          git config user.email "actions@github.com"
-          git add data/tsp-prices.json
-          git commit -m "Update TSP price data" || echo "No changes"
-          git push
+```
+(0.50 × 10.13) + (0.30 × 13.52) + (0.20 × 15.35) = 12.19%
 ```
 
-## 4. Core feature: relative-strength rotation
+The blended return for that allocation and window should compute to 12.19%. Use this as a unit test for the blending logic.
 
-For each fund, compute trailing return over multiple lookback windows (1 month, 3 month, 6 month at minimum, expose as a toggle). Rank funds by return within the selected window.
+Everything downstream needs to use the blended return as "current," not a single fund:
 
-Logic:
+* The ranking table's "current" row should show the blended allocation's return, Sharpe-style score, and drawdown, alongside the individual funds, clearly marked as the actual current position rather than a fund competing for the top spot.
+* The chart should plot the blended allocation as its own line (drawn thicker, as the current build already does for whatever's marked "current"), in addition to each individual fund's line.
+* The standing drawdown trigger (see section 5) should measure drawdown on the blended allocation, not a single fund.
+
+## 4. Rebalancing logic replaces full-rotation logic
+
+Because the holding is a blend, not a single fund, "should I switch" isn't really the right question anymore, "how much weight should shift, and toward what" is. Rebuild the core signal logic around reweighting:
+
+1. On a schedule matching real-world transfer cadence (twice monthly, matching the two unrestricted transfers), rank the five funds by trailing return over the selected lookback window.
+2. Compute the blended return of the current allocation over the same window.
+3. Flag a signal only if the top-ranked fund beats the blended return by more than the configured margin threshold (currently 2 percentage points). A bare edge-out shouldn't trigger anything.
+4. When a signal fires, the suggested action should be a reweighting, not a full swap: shift a configurable slice of the allocation (a reasonable default is something like 10-15 percentage points) away from the current biggest laggard and toward the current leader, rather than proposing 100% into the leader. Support both a "tilt" mode (this incremental reweighting) and a "full rotation" mode (move everything to the single leader) as selectable strategies, but default to tilt.
+5. Alongside the suggested reweighting, show the hindsight comparison plainly labeled as hindsight: what the blended return would have been if the account had been 100% in the current leader for the same window. This is useful context, not a promise, make sure the UI doesn't imply it's a forecast.
+6. Capacity and safe-harbor logic stays as originally specced: check whether an unrestricted transfer is still available this month, and if not, still allow moves that only increase the G Fund's weight (the uncapped safe-harbor exception), flagging anything that would require moving out of G into a stock fund as "would act, but capped this month" rather than a live signal.
+
+## 5. Additional metrics, unchanged in concept, updated in scope
+
+* Sharpe-style ratio: (fund's trailing return minus G Fund's trailing return over the same window) divided by the standard deviation of the fund's daily returns over that window. This is a relative-strength-vs-risk score, not an annualized Sharpe ratio, label it that way in the UI (the current build already does this well, keep the exact wording).
+* Max drawdown: largest peak-to-trough decline within the lookback window, computed per individual fund AND for the blended allocation.
+* Trend filter: is the fund's (or the blend's) current value above its own trailing 50-day moving average. Treat as a confirmation flag, not a hard gate, a fund can lead on relative strength while failing the trend filter, and that combination should be shown, not hidden.
+* Regime flag: a risk-on/risk-off flag, currently manual, ideally wired to the HMM regime-detection dashboard eventually. Whatever the source, label it clearly in the UI (manual toggle vs. model-driven) and show when it was last updated, so a stale flag is visible as stale. Rotation signals into stock funds should be de-emphasized in the UI when flagged risk-off; the standing defensive rule below still fires regardless of regime.
+* Standing defensive rule: independent of the twice-monthly schedule, if the blended allocation draws down more than the configured percentage (currently 8%) from its recent peak, surface a safe-harbor signal immediately, since increasing G Fund weight is never capped at 2/month.
+
+## 6. Data source and a data-freshness check
+
+* Primary: TSP's own published prices, not proxy ETFs. Official source is tsp.gov/share-price-history; tspfolio.com publishes a single CSV of daily closing prices for all five funds back to June 2003, which is the easier source to pull programmatically.
+* CORS: fetching that CSV directly from the browser at runtime will likely fail as a cross-origin request. Don't build this as a client-side fetch. Use a scheduled GitHub Actions workflow that fetches the source server-side, computes derived fields, and commits an updated JSON file into the repo (`/data/tsp-prices.json`). The static site reads that committed file, no live cross-origin calls needed.
+* Freshness check, new: sites that show performance in a monthly-table format (year/month columns, rather than a daily series) are often only current through the most recently closed month, not through today. When cross-checking or seeding data from a source like that, confirm the as-of date explicitly rather than assuming it's current, a YTD figure that's actually "YTD through last month" can understate current performance by several points during a strong run. The daily CSV approach above avoids this by construction, but treat monthly-table sources as spot-verification only, not a live feed.
+* Built-in integrity check: after each data refresh, have the pipeline compound each fund's daily or monthly returns over a period and confirm the result matches that fund's independently reported cumulative return for the same period (within rounding). This generalizes a manual check that already caught the freshness issue above, worth automating so a bad pull or a broken parse gets flagged instead of silently feeding wrong numbers into the dashboard.
+
+## 7. Dashboard UI
+
+* Holding input: weighted allocation form (C/S/I/F/G percentages summing to 100), replacing the single-fund dropdown. Pre-fill with 50/30/20 C/S/I as the seed/test case.
+* Blended return: shown prominently, computed as described in section 3, alongside each individual fund's return.
+* Chart: cumulative trailing return by fund over the selected lookback window, plus the blended allocation as its own thicker line. Current build's "no intraday movement to show" caption is good, keep it.
+* Ranking table: all five funds visible, including G Fund (currently missing, it's on the chart but not the table). G doesn't need a Sharpe-style score against itself, but its return and drawdown should be visible in the same table for direct comparison when evaluating a move toward safety. Add a row for the blended allocation itself, clearly marked as the current position rather than a competitor for the top spot.
+* Transfer tracker: relabel for clarity. The current "3 / 2 used" reads as a contradiction. If the intent is 2 unrestricted transfers plus additional safe-harbor moves into G, say that explicitly, e.g. "2/2 unrestricted used, 1 additional safe-harbor move this month."
+* Transfer log: add a safeguard against duplicate or no-op entries, specifically, logging a move to a fund you're already reporting as your full holding shouldn't be possible, and identical same-day entries should be caught rather than silently duplicated. The current build has three identical entries logged on the same day, worth checking whether that's a UI bug or leftover test data.
+* Signal log: keep as built, running history of signals and whether they were acted on, feeding the backtest validation.
+* Regime flag indicator: label its source (manual vs. model-driven) and last-updated time, as noted in section 5.
+* Evaluation schedule: show the actual full schedule (for example, "evaluates on the 1st and 15th"), not just the single next upcoming date. The current build only shows one upcoming date, worth confirming the underlying schedule genuinely lands twice a month, matching the 2-transfer cap it's designed around, and not just once.
+* Backtest results: surface the most recent backtest run's results directly in the dashboard (win rate, comparison vs. static benchmarks), not just a footer instruction to run a CLI command. If it hasn't been run yet, say so plainly rather than implying it has.
+
+## 8. Backtesting, required before this touches real money
+
+* Build a standalone backtest script that replays the exact rule set (lookback window, margin threshold, transfer cap, drawdown trigger, tilt-vs-full-rotation mode) against the full historical CSV, simulating from a blended starting allocation, not a single fund.
+* Compare the simulated strategy's ending value against simply holding the current static blend the whole period, a static 100% C Fund allocation, and a static age-appropriate L Fund, over the same period.
+* Report win rate (percentage of rebalancing periods that beat the static benchmark), not just total return, a strategy that wins big once and loses small often has an ugly underlying track record that total return alone hides.
+* Don't treat any signal from the live dashboard as real until this backtest has run across multiple market regimes. The 30+ day paper-trading rule from the trading course this is being built alongside is a reasonable floor to apply here too, watch signals play out before acting on the first one.
+
+## 9. Suggested stack and repo structure
+
+Matching the existing GitHub Pages pattern:
+
+* React + Next.js static export, Tailwind for styling
+* `papaparse` for CSV parsing in the data-refresh script
+* `recharts` for the chart
+
+```
+/data/tsp-prices.json          # committed, updated daily by Actions
+/scripts/fetch-prices.js       # the Actions data pull + derived metrics + integrity check
+/scripts/backtest.js           # standalone backtest runner
+/src/components/AllocationInput.jsx   # weighted holding input, replaces the fund dropdown
+/src/components/RotationChart.jsx
+/src/components/RankingTable.jsx
+/src/components/SignalLog.jsx
+/src/lib/metrics.js            # Sharpe, drawdown, moving average, ranking, blended-return logic
+```
+
+Deploy via GitHub Pages, same as FinanceHub.
+
+## 10. What this tool explicitly does not do
+
+* Does not execute trades. TSP has no public transaction API, every real reallocation still happens manually on tsp.gov.
+* Does not guarantee performance. It's a decision-support and record-keeping tool, the backtest step and the hindsight-labeled comparisons exist specifically to keep it honest about that.
+
+---
+
+## Deviations from this spec (v2)
+
+- **Allocation is a static snapshot, not auto-drifted daily.** The dashboard doesn't track
+  per-fund dollar amounts, so it can't know how your % mix silently drifts between updates the
+  way a real account does. `blendedReturnPct` is the fixed-weight linear combination the spec's
+  worked example describes — exact for that formula, but "as of your last update," not
+  continuously adjusted. Nudge the allocation periodically if drift matters to you.
+- **The backtest tracks real per-fund unit holdings day-by-day** to get an accurate multi-year
+  equity curve (classic buy-and-hold-until-rebalanced), deriving "current %" from that drifted
+  state at each evaluation point and feeding it into the exact same `blendedReturnPct`/
+  `evaluateRebalanceSignal` the live dashboard uses. Different internal state than the live
+  dashboard's static snapshot, same formula and signal engine either way.
+- **Integrity check is self-consistency + a dated reference checkpoint, not a live second
+  data source.** A true "independently reported" comparison on every run would mean scraping a
+  second site each time — reintroducing the exact CORS/fragility problem already avoided by
+  using tsp.gov directly. Implemented instead: (a) an always-on compounding-consistency check
+  per fund (a regression guard on this script's own arithmetic, hard-fails the write if wrong),
+  and (b) the spec's own worked reference point — C/S/I YTD through 2026-07-31 — checked with
+  tolerance whenever the data covers that date, warning non-fatally rather than blocking. It
+  matched exactly on first run (10.13% / 13.52% / 15.35%, confirming both the reference and the
+  data). More checkpoints can be appended the same way over time.
+- **AllocationInput is the one place you edit your holding**, replacing both the old "Current
+  holding" dropdown and the transfer tracker's own mini-form. A real bug turned up testing this:
+  the no-op/duplicate guard originally compared a new log entry against the *live* "current"
+  allocation — but editing already commits live for what-if calculations, so draft and current
+  were always identical by the time you clicked Log, and the guard fired on every legitimate
+  entry. Fixed by comparing against the *last logged transfer* instead (or the seed allocation
+  if none exists yet), which is what "already reporting as your holding" actually means.
+- **Storage keys were versioned** (`:v2` suffixes) rather than migrated in place for the shapes
+  that changed (single fund → allocation object). Cheap for a pre-launch local tool, and it
+  means the 3 duplicate test entries flagged in this spec simply stop being read rather than
+  needing manual cleanup — they were leftover clicks from live-testing the previous build in
+  the browser preview, not a logging bug.
+- **The blended row in the ranking table is pinned above the sorted list**, not interleaved
+  into the sort — matches "not a competitor for the top spot" literally.
+- **Default tilt size: 12 percentage points** (within the spec's 10-15pp range), adjustable in
+  Rules & Strategy.
+- Everything in the v1 deviations section below (stack, data source, data path, derived-fields
+  location, regime flag, standing-defensive-rule entry bound) still applies unchanged in v2.
+
+---
+
+## Appendix: v1 spec (superseded by the above)
+
+> Original v1 project brief. Kept for history; see the v1 deviations section immediately below
+> it for what changed during that build.
+
+### 1. What this is
+
+A read-only monitoring and decision-support dashboard for Thrift Savings Plan (TSP) fund allocation. It tracks the C, S, I, F, and G funds, ranks them by trailing performance, and surfaces when a reallocation is worth considering, while respecting TSP's actual transfer rules. It does not execute trades. TSP has no public transaction API, so any real reallocation still happens manually on tsp.gov.
+
+### 2. Ground-truth rules to encode correctly
+
+Get these right before anything else, the whole tool is built on top of them — same five rules as section 2 above (pricing, cutoff, transfer limit, funds tracked).
+
+### 3. Data source (v1)
+
+tspfolio.com's CSV was the originally suggested source; see "Deviations" — v2 (and the actual build) uses tsp.gov's own CSV directly instead.
+
+### 4. Core feature: relative-strength rotation (v1, single-fund)
 
 1. On a schedule matching real-world transfer cadence (twice monthly, not daily), rank funds by trailing return for the selected lookback window.
 2. Compare the top-ranked fund against the currently held fund.
@@ -76,57 +197,11 @@ Logic:
 6. If no unrestricted transfers remain this month AND the signal target is specifically the G Fund, still flag it as actionable (uncapped safe harbor).
 7. If no unrestricted transfers remain and the target is a stock fund, flag it as "would switch, but capped this month" rather than a real actionable signal, so the dashboard stays honest about what's actually possible.
 
-## 5. Additional metrics to compute and display alongside raw return
+### 5-9
 
-* Sharpe-style ratio: (fund's trailing return minus G Fund's trailing return over the same window) divided by the standard deviation of the fund's daily returns over that window. G Fund as the risk-free proxy is the standard convention in TSP-specific analysis.
-* Max drawdown: largest peak-to-trough decline within the lookback window, per fund.
-* Trend filter: is the fund's current price above its own trailing N-day moving average (suggest 50-day)? Treat as a confirmation flag, not a hard gate, a fund can lead on relative strength while failing the trend filter, and that specific combination is worth surfacing distinctly rather than hiding.
-* Regime flag: expose a manual or model-driven risk-on/risk-off flag (this is where the HMM regime dashboard from the trading course plugs in directly), and suppress or de-emphasize rotation signals during a flagged risk-off regime, since "leading" during a broad selloff often just means "fell the least."
-* Standing defensive rule: independent of the twice-monthly schedule, if the currently held fund draws down more than a configurable percentage (suggest 7-10%) from its recent peak, surface a safe-harbor G Fund signal immediately, since that specific move is never capped.
+Additional metrics, dashboard UI, backtesting, and suggested stack — same content as v2 sections 5, 7, 8, 9 above, minus the allocation-specific additions (blended metrics, tilt/full mode, hindsight comparison, G row + pinned blend row, relabeled transfer tracker, evaluation-schedule display, backtest results in the UI). See git history for the original full v1 text if needed.
 
-## 6. Dashboard UI
-
-* Line chart of cumulative trailing return by fund over the selected lookback window, current holding visually distinguished.
-* Ranking table: fund, trailing return, Sharpe-style ratio, max drawdown, trend-filter pass/fail, current leader highlighted.
-* Transfer-count tracker for the current calendar month (used / 2 remaining), with a clear note when only the G Fund safe harbor is left.
-* Signal log: running history of past signals and whether they were acted on. This becomes an actual track record over time and feeds the backtest sanity check below.
-* Regime flag indicator, pulled from or manually toggled alongside the HMM dashboard.
-
-## 7. Backtesting, required before this touches real money
-
-* Build a standalone backtest script that replays the exact rule set (lookback window, margin threshold, transfer cap, drawdown trigger) against the full historical CSV.
-* Compare the simulated rotation strategy's ending value against simply holding a static C Fund allocation, and against a static age-appropriate L Fund, over the same period.
-* Report win rate (percentage of rotation periods that beat the static benchmark), not just total return, a strategy that wins big once and loses small often has an ugly underlying track record that total return alone hides.
-* Don't treat any signal from the live dashboard as real until this backtest has run across multiple market regimes. The trading course's own 30+ day paper-trading rule is a reasonable floor to apply here too, watch the signals play out before acting on the first one.
-
-## 8. Suggested stack and repo structure
-
-Matching the existing GitHub Pages pattern from FinanceHub:
-
-* React + Next.js static export, Tailwind for styling
-* `papaparse` for CSV parsing in the data-refresh script
-* `recharts` for the chart
-
-```
-/data/tsp-prices.json          # committed, updated daily by Actions
-/scripts/fetch-prices.js       # the Actions data pull + derived metrics
-/scripts/backtest.js           # standalone backtest runner
-/src/components/RotationChart.jsx
-/src/components/RankingTable.jsx
-/src/components/SignalLog.jsx
-/src/lib/metrics.js            # Sharpe, drawdown, moving average, ranking logic
-```
-
-Deploy via GitHub Pages, same as FinanceHub.
-
-## 9. What this tool explicitly does not do
-
-* Does not execute trades. TSP has no public transaction API, every real reallocation still happens manually on tsp.gov.
-* Does not guarantee performance. It's a decision-support and record-keeping tool, the backtest step exists specifically to keep it honest about that.
-
----
-
-## Deviations from this spec (and why)
+### Deviations from v1 spec (and why)
 
 - **Stack**: built with Create React App (react-scripts 5) + plain CSS, not Next.js +
   Tailwind. `finance-hub` — the sibling project this was told to match — turned out to

@@ -1,19 +1,29 @@
 /**
  * Browser-only localStorage persistence. This is a static site with no
- * backend, so current holding, the transfer log, signal log, regime flag,
- * and thresholds all live client-side. The monthly transfer count is
- * *derived* from transferLog rather than tracked separately — the user
- * logs each real move they actually execute on tsp.gov, and that log is
- * simultaneously the transfer-count source and the audit trail.
+ * backend, so the allocation, transfer log, signal log, regime flag, and
+ * thresholds all live client-side. The monthly transfer count is *derived*
+ * from transferLog rather than tracked separately — the user logs each real
+ * move they actually execute on tsp.gov, and that log is simultaneously the
+ * transfer-count source and the audit trail.
+ *
+ * v2: keys for shapes that changed from v1 (single fund -> allocation
+ * object) are versioned (":v2") rather than migrated in place — cheap for a
+ * pre-launch local tool, and it means any old test entries under the old
+ * key just stop being read instead of needing manual cleanup.
  */
 
+import { CORE_FUNDS } from './metrics';
+
 const KEYS = {
-  currentHolding: 'tsp-rotation:currentHolding',
-  transferLog: 'tsp-rotation:transferLog',
-  signalLog: 'tsp-rotation:signalLog',
-  regimeOff: 'tsp-rotation:regimeOff',
+  allocation: 'tsp-rotation:allocation',
+  transferLog: 'tsp-rotation:transferLog:v2',
+  signalLog: 'tsp-rotation:signalLog:v2',
+  regime: 'tsp-rotation:regime',
   settings: 'tsp-rotation:settings',
 };
+
+// Seed/test allocation from the spec's worked example.
+const DEFAULT_ALLOCATION = { C: 50, S: 30, I: 20, F: 0, G: 0 };
 
 const DEFAULT_SETTINGS = {
   windowMonths: 3,
@@ -21,7 +31,11 @@ const DEFAULT_SETTINGS = {
   drawdownTriggerPct: 8,
   recentPeakLookbackDays: 60,
   maDays: 50,
+  mode: 'tilt',
+  tiltPct: 12,
 };
+
+const DEFAULT_REGIME = { value: false, source: 'manual', updatedAt: null };
 
 function readJSON(key, fallback) {
   try {
@@ -41,23 +55,62 @@ function writeJSON(key, value) {
   }
 }
 
-export function getCurrentHolding() {
-  return readJSON(KEYS.currentHolding, 'G');
+function normalizeAllocation(allocation) {
+  const out = {};
+  for (const fund of CORE_FUNDS) out[fund] = Math.round((allocation?.[fund] ?? 0) * 10) / 10;
+  return out;
 }
 
-export function setCurrentHolding(fund) {
-  writeJSON(KEYS.currentHolding, fund);
+function allocationsEqual(a, b) {
+  return CORE_FUNDS.every((f) => (a?.[f] ?? 0) === (b?.[f] ?? 0));
+}
+
+export function getAllocation() {
+  return normalizeAllocation(readJSON(KEYS.allocation, DEFAULT_ALLOCATION));
+}
+
+export function setAllocation(allocation) {
+  const normalized = normalizeAllocation(allocation);
+  writeJSON(KEYS.allocation, normalized);
+  return normalized;
 }
 
 export function getTransferLog() {
   return readJSON(KEYS.transferLog, []);
 }
 
-export function addTransferLogEntry({ date, toFund, note = '' }) {
+/**
+ * Log a real transfer (a new target allocation you actually set on tsp.gov).
+ * Rejects, rather than silently accepting, two known v1 bugs:
+ *   - a no-op: identical to your last LOGGED allocation (the seed default if
+ *     you've never logged one) — i.e. "moving" to where you already are.
+ *     Deliberately compared against the transfer-log history, not against
+ *     whatever's currently live-edited in AllocationInput: editing commits
+ *     to `allocation` immediately for what-if calculations, so by the time
+ *     Log is clicked the draft and the live "current" value are always
+ *     identical — comparing against that would make this guard never fire.
+ *   - an exact duplicate: the same date + same allocation is already logged
+ * Returns { ok: true, log } or { ok: false, reason, log: unchanged }.
+ */
+export function addTransferLogEntry({ date, allocation, note = '' }) {
+  const normalized = normalizeAllocation(allocation);
   const log = getTransferLog();
-  log.push({ id: `${date}-${toFund}-${Date.now()}`, date, toFund, note });
-  writeJSON(KEYS.transferLog, log);
-  return log;
+  const sorted = [...log].sort((a, b) => (a.date < b.date ? 1 : -1));
+  const lastLogged = sorted[0]?.allocation ?? DEFAULT_ALLOCATION;
+
+  if (allocationsEqual(normalized, lastLogged)) {
+    return { ok: false, reason: 'That matches your last logged allocation already — nothing to log.', log };
+  }
+  const duplicate = log.some((e) => e.date === date && allocationsEqual(e.allocation, normalized));
+  if (duplicate) {
+    return { ok: false, reason: 'An identical entry is already logged for this date.', log };
+  }
+
+  const entry = { id: `${date}-${Date.now()}`, date, allocation: normalized, note };
+  const nextLog = [...log, entry];
+  writeJSON(KEYS.transferLog, nextLog);
+  setAllocation(normalized);
+  return { ok: true, log: nextLog };
 }
 
 export function removeTransferLogEntry(id) {
@@ -89,12 +142,14 @@ export function markSignalActed(id, actedOn) {
   return log;
 }
 
-export function getRegimeOff() {
-  return readJSON(KEYS.regimeOff, false);
+export function getRegime() {
+  return readJSON(KEYS.regime, DEFAULT_REGIME);
 }
 
 export function setRegimeOff(value) {
-  writeJSON(KEYS.regimeOff, value);
+  const next = { value, source: 'manual', updatedAt: new Date().toISOString() };
+  writeJSON(KEYS.regime, next);
+  return next;
 }
 
 export function getSettings() {
@@ -107,4 +162,4 @@ export function setSettings(partial) {
   return merged;
 }
 
-export { DEFAULT_SETTINGS };
+export { DEFAULT_SETTINGS, DEFAULT_ALLOCATION };

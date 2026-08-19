@@ -1,0 +1,44 @@
+{
+  "generatedAt": "2026-08-19T21:04:09.953Z",
+  "range": {
+    "start": "2003-05-31",
+    "end": "2026-08-18"
+  },
+  "rules": {
+    "windowMonths": 3,
+    "marginPct": 2,
+    "drawdownTriggerPct": 8,
+    "mode": "tilt",
+    "tiltPct": 12
+  },
+  "startAllocation": {
+    "C": 50,
+    "S": 30,
+    "I": 20,
+    "F": 0,
+    "G": 0
+  },
+  "strategy": {
+    "totalReturnPct": 363.4471279986059,
+    "cagrPct": 6.828201379224397,
+    "maxDrawdownPct": 19.59754322470168
+  },
+  "staticBlend": {
+    "totalReturnPct": 1006.6385,
+    "cagrPct": 10.909142569922148,
+    "maxDrawdownPct": 57.115793619535246
+  },
+  "staticC": {
+    "totalReturnPct": 1139.253,
+    "cagrPct": 11.451139824608504,
+    "maxDrawdownPct": 55.22310756972112
+  },
+  "staticL": {
+    "fund": "L2050",
+    "totalReturnPct": 369.67699999999996,
+    "cagrPct": 6.889659791576763,
+    "maxDrawdownPct": 29.20338263453857
+  },
+  "winRatePct": 41.935483870967744,
+  "tradesCount": 292
+}

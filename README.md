@@ -36,8 +36,10 @@ browser CORS issues; the site itself only ever reads the committed
 npm run fetch-prices   # re-pull from tsp.gov and rewrite public/data/tsp-prices.json
 ```
 
-A scheduled workflow (`.github/workflows/update-prices.yml`) runs this automatically most
-weekday evenings and commits the result. **For the bot's commit/push to succeed**, the repo
+A scheduled workflow (`.github/workflows/update-prices.yml`) runs this automatically every
+evening (~10:30-11:30pm ET) and commits the result. Weekend/holiday runs just re-fetch the
+same closing data and no-op — TSP only posts one NAV per business day either way. **For the
+bot's commit/push to succeed**, the repo
 needs *Settings → Actions → General → Workflow permissions → "Read and write permissions"*
 enabled (the workflow's own `permissions: contents: write` block covers the token scope, but
 the repo-level toggle also needs to allow it).

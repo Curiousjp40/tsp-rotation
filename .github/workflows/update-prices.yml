@@ -2,10 +2,13 @@ name: Update TSP Prices
 
 on:
   schedule:
-    # 03:30 UTC, Tue-Sat = ~10:30-11:30pm ET Mon-Fri (DST-dependent).
+    # 03:30 UTC, every day = ~10:30-11:30pm ET the same evening (DST-dependent).
     # Verified manually: tsp.gov posts the day's closing NAVs by ~11:24pm ET
-    # the same evening, so this has margin. Adjust if that timing changes.
-    - cron: "30 3 * * 2-6"
+    # the same evening, so this has margin. Runs daily (not just Tue-Sat) for
+    # simplicity — TSP only posts one NAV per business day, so a run on a
+    # weekend/holiday just re-fetches the same data and the commit step
+    # below no-ops ("No changes"); harmless, just a wasted CI minute.
+    - cron: "30 3 * * *"
   workflow_dispatch: {}
 
 permissions:

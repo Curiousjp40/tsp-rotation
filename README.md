@@ -108,12 +108,42 @@ Don't treat a live dashboard signal as real until this has been reviewed across 
 market regimes (2008, 2020, and 2022 are all in the committed history) — and, per the spec,
 until the signal has been paper-traded for 30+ days.
 
+## Parameter sweep — does any rule set actually have an edge?
+
+One backtest run only tells you the result for the parameters you typed in, not whether
+they're good parameters. The sweep runs every combination of window × margin × drawdown ×
+tilt in the grid below against the full history, ranks by win rate vs. static C Fund, then
+re-checks the winner on two non-overlapping halves (2003-2018, 2019-2026) it wasn't
+specifically picked from:
+
+```bash
+npm run sweep -- --save   # ~192 combinations, ~2 minutes; writes public/data/sweep-results.json
+```
+
+Grid: window ∈ {1, 3, 6} months, margin ∈ {1, 2, 3, 5} pp, drawdown ∈ {5, 8, 12, 15}%,
+tilt ∈ {5, 10, 15, 20} pp (edit `GRID` in `scripts/sweep.js` to change it). Only a combination
+that beats static C Fund's total return in the full period **and** both out-of-sample halves
+gets treated as validated — the dashboard's "Parameter sweep" card and a caveat banner on the
+Current Signal panel both reflect this pass/fail live, reading straight from the saved JSON.
+
+**Actual finding from the committed history, as of this writing: FAIL.** 0 of 192 combinations
+beat static C Fund over the full 2003-2026 period — a monster, mostly-uninterrupted C Fund bull
+run is a hard benchmark for any strategy that spends time in other funds to clear. The single
+best-by-win-rate combination (6mo/3pp/8%/20pp) does beat static C on 2003-2018 but *loses* to it
+on 2019-2026, which is exactly the kind of period-dependent result the out-of-sample check
+exists to catch. Per the spec: that's a real finding, not a bug — this family of rules
+(trailing-return relative strength + a drawdown safety valve) doesn't have a demonstrated edge
+over simply holding C Fund across this history. Every live signal should be read as
+informational until/unless a future re-run of the sweep (different grid, different history,
+different fund universe) finds something that actually passes.
+
 ## Local development
 
 ```bash
 npm install
 npm run fetch-prices   # seed public/data/tsp-prices.json if it isn't already committed
 npm run backtest -- --save   # optional: populate the Backtest results card
+npm run sweep -- --save      # optional: populate the Parameter sweep card
 npm test                     # runs the blended-return unit test
 npm start                    # http://localhost:3000
 ```

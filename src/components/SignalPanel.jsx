@@ -30,7 +30,28 @@ const STATE_COPY = {
   'no-signal': (s) => `No signal. Your blend is either leading the ${s.windowMonths}-month window or within ${s.marginPct}pp of the leader (${s.leader?.fund ?? '—'}).`,
 };
 
-export default function SignalPanel({ signal, onLogSignal }) {
+function ValidationCaveat({ sweepStatus, sweepBest }) {
+  if (sweepStatus === 'loading') return null;
+  if (sweepStatus === 'pass' && sweepBest) {
+    return (
+      <div className="signal-alert" style={{ background: 'var(--success-bg)', color: 'var(--success)', marginBottom: '.8rem' }}>
+        ✅ Validated: a 192-combination parameter sweep found window={sweepBest.window}mo/margin={sweepBest.margin}pp/
+        drawdown={sweepBest.drawdown}%/tilt={sweepBest.tilt}pp beats static C Fund in-sample and on both out-of-sample
+        halves. See "Parameter sweep" below.
+      </div>
+    );
+  }
+  const detail = sweepStatus === 'missing'
+    ? "No parameter sweep has been run yet — this signal's rule set is unvalidated."
+    : 'A 192-combination parameter sweep found no rule set that beats static C Fund both in-sample and out-of-sample.';
+  return (
+    <div className="signal-alert" style={{ marginBottom: '.8rem' }}>
+      ⚠️ {detail} Treat this as informational, not a backed recommendation — see "Parameter sweep" below.
+    </div>
+  );
+}
+
+export default function SignalPanel({ signal, onLogSignal, sweepStatus, sweepBest }) {
   const key = signal.state === 'actionable-safe-harbor'
     ? (signal.reason === 'standing-defensive' ? 'actionable-safe-harbor-defensive' : 'actionable-safe-harbor-margin')
     : signal.state;
@@ -54,6 +75,8 @@ export default function SignalPanel({ signal, onLogSignal }) {
         <span><span className="icon">📡</span>Current signal</span>
         <span className={`badge badge-state state-${signal.state}`}>{signal.state.replace(/-/g, ' ')}</span>
       </div>
+      <ValidationCaveat sweepStatus={sweepStatus} sweepBest={sweepBest} />
+
       <div className="signal-headline">{headline}</div>
       <div className="signal-detail">{STATE_COPY[key](signal)}</div>
 

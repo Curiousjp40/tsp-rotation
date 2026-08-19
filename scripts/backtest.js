@@ -333,7 +333,23 @@ function pad(str, width = 14) {
   return String(str).padStart(width);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run the CLI when invoked directly (`node scripts/backtest.js`) —
+// scripts/sweep.js requires the pieces below to reuse the exact same
+// simulation without spawning a subprocess per parameter combination.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  DEFAULT_ALLOC,
+  loadPrices,
+  sliceByDateRange,
+  simulateRebalance,
+  simulateStaticHold,
+  winRate,
+  summarize,
+  yearsBetween,
+};

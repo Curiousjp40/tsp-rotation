@@ -21,6 +21,7 @@
     "eject": "react-scripts eject",
     "fetch-prices": "node scripts/fetch-prices.js",
     "backtest": "node scripts/backtest.js",
+    "sweep": "node scripts/sweep.js",
     "predeploy": "npm run build",
     "deploy": "gh-pages -d build"
   },

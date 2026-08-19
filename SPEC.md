@@ -126,6 +126,22 @@ Deploy via GitHub Pages, same as FinanceHub.
 * Does not execute trades. TSP has no public transaction API, every real reallocation still happens manually on tsp.gov.
 * Does not guarantee performance. It's a decision-support and record-keeping tool, the backtest step and the hindsight-labeled comparisons exist specifically to keep it honest about that.
 
+## 11. Parameter search, finding a rule set that actually beats buy-and-hold
+
+The backtest in section 8 returns a result for whatever parameters happen to be set, but one result doesn't tell you whether those numbers are good, or just the ones that were typed in first. Before the dashboard's live signal gets treated as return-maximizing, search the parameter space and validate it out of sample.
+
+**Sweep**: run the backtest across every combination of:
+* Lookback window: 1, 3, 6 months
+* Margin threshold: 1, 2, 3, 5 percentage points
+* Drawdown trigger: 5, 8, 12, 15 percent
+* Tilt size: 5, 10, 15, 20 percentage points
+
+That's roughly 190 combinations, each run against the full 2003-2026 history, logging total return, CAGR, max drawdown, and win rate vs. static C Fund for every one. This is just looping the existing `backtest.js` over a parameter grid and writing results to a table, sorted best to worst by win rate. Fast, no real performance concern.
+
+**Validate out of sample, this step is not optional**: whatever combination wins the sweep, re-run it on two separate slices, 2003-2018 only, then 2019-2026 only, data the sweep didn't use to pick that combination. A rule set that wins on the full period but loses on 2019-2026 was likely fit to noise in the years it was tuned against, not a real edge. Only a combination that beats its static benchmark in both the in-sample and out-of-sample windows should ever become the dashboard's live, confidently-stated recommendation.
+
+**Once (if) something passes**: that becomes the production rule set, replacing today's defaults (3mo / 2pp / 8% / 12pp), and the Current Signal panel states its recommendation with actual backing. If nothing in the sweep clears the bar in both windows, that's a real finding too, it means this family of rules (trailing-return relative strength with a drawdown safety valve) doesn't have an edge over this history, and the dashboard's honest job becomes telling you "stay put" on most logins, which is still telling you what to invest in, the answer just won't always be a different fund.
+
 ---
 
 ## Deviations from this spec (v2)
@@ -167,6 +183,33 @@ Deploy via GitHub Pages, same as FinanceHub.
   Rules & Strategy.
 - Everything in the v1 deviations section below (stack, data source, data path, derived-fields
   location, regime flag, standing-defensive-rule entry bound) still applies unchanged in v2.
+
+## Section 11 result (parameter sweep) — FAIL, and what that changed
+
+Ran `npm run sweep -- --save` against the committed 2003-2026 history: **0 of 192 grid
+combinations beat static C Fund's total return over the full period.** The single
+best-by-win-rate combination (6mo window / 3pp margin / 8% drawdown / 20pp tilt) does beat
+static C on the 2003-2018 half but *loses* to it on 2019-2026 — exactly the kind of
+period-dependent result the out-of-sample check exists to catch. Per section 11's own decision
+rule, this is a real finding, not a bug: this family of rules (trailing-return relative
+strength + a drawdown safety valve) has no demonstrated edge over simply holding C Fund across
+this history — a monster, mostly-uninterrupted C Fund bull run is a hard benchmark to clear for
+any strategy that spends time in other funds.
+
+Per spec: since nothing passed, the production defaults were **left unchanged** (3mo/2pp/8%/
+12pp — the original spec's suggested values, not the swept "best," since that combination
+failed validation). What did change: `SweepSummary.jsx` surfaces the full result (pass/fail,
+the winning combination, both out-of-sample rows) directly in the dashboard, and a caveat
+banner on the Current Signal panel reads the same saved JSON live — so if a future re-run ever
+does find a validated combination, both update automatically without a code change; until then,
+every live signal carries an explicit "informational, not backed" warning rather than silently
+implying validation that doesn't exist.
+
+One methodology note worth being honest about: "out of sample" here means the sweep scores the
+*full* 2003-2026 range to pick a winner, then that winner is re-checked on each non-overlapping
+half separately — a consistency check across sub-periods, not a blind holdout in the strict
+sense (the full range that picked the winner contains both halves). `SweepSummary.jsx` and the
+README both say this plainly rather than overclaiming what got validated.
 
 ---
 

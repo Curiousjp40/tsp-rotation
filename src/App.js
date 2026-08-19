@@ -15,16 +15,29 @@ import RotationChart from './components/RotationChart';
 import RankingTable from './components/RankingTable';
 import SignalLog from './components/SignalLog';
 import BacktestSummary from './components/BacktestSummary';
+import SweepSummary from './components/SweepSummary';
 
 export default function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [sweep, setSweep] = useState(null);
+  const [sweepStatus, setSweepStatus] = useState('loading'); // loading | missing | pass | fail
 
   const [settings, setSettingsState] = useState(storage.getSettings());
   const [allocation, setAllocationState] = useState(storage.getAllocation());
   const [regime, setRegimeState] = useState(storage.getRegime());
   const [transferLog, setTransferLog] = useState(storage.getTransferLog());
   const [signalLog, setSignalLog] = useState(storage.getSignalLog());
+
+  useEffect(() => {
+    fetch(`${process.env.PUBLIC_URL}/data/sweep-results.json`)
+      .then((res) => {
+        if (!res.ok) throw new Error('missing');
+        return res.json();
+      })
+      .then((json) => { setSweep(json); setSweepStatus(json.passesValidation ? 'pass' : 'fail'); })
+      .catch(() => setSweepStatus('missing'));
+  }, []);
 
   useEffect(() => {
     fetch(`${process.env.PUBLIC_URL}/data/tsp-prices.json`)
@@ -158,7 +171,7 @@ export default function App() {
               <RegimeToggle regime={regime} onChange={handleRegimeChange} />
             </div>
 
-            <SignalPanel signal={signal} onLogSignal={handleLogSignal} />
+            <SignalPanel signal={signal} onLogSignal={handleLogSignal} sweepStatus={sweepStatus} sweepBest={sweep?.best} />
 
             <RotationChart
               prices={data.prices}
@@ -168,6 +181,8 @@ export default function App() {
             />
 
             <RankingTable ranking={signal.ranking} blended={blended} allocation={allocation} windowMonths={settings.windowMonths} />
+
+            <SweepSummary sweep={sweep} status={sweepStatus} />
 
             <BacktestSummary />
 
@@ -179,8 +194,8 @@ export default function App() {
       <footer className="footer">
         Decision-support and record-keeping only — not a guarantee of performance, not investment advice, and it does not place
         trades. See <a href="https://www.tsp.gov" target="_blank" rel="noreferrer">tsp.gov</a> to actually reallocate.
-        Run the backtest (<code>npm run backtest -- --save</code>) across multiple market regimes, and paper-trade signals
-        for 30+ days, before treating any live signal here as real.
+        Run the parameter sweep (<code>npm run sweep -- --save</code>) to check whether these rules have a validated
+        edge over static buy-and-hold, and paper-trade signals for 30+ days, before treating any live signal here as real.
       </footer>
     </div>
   );

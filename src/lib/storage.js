@@ -80,6 +80,19 @@ export function getTransferLog() {
 }
 
 /**
+ * Your last real, logged allocation (the seed default if you've never
+ * logged one) — the one immutable source of truth for "what do I actually
+ * hold," independent of whatever's currently live-edited/preset-explored in
+ * the Calculator. Used both by the no-op guard below and by the Calculator's
+ * "Your current holding" preset to snap back to reality after exploring a
+ * hypothetical split.
+ */
+export function getLastLoggedAllocation() {
+  const sorted = [...getTransferLog()].sort((a, b) => (a.date < b.date ? 1 : -1));
+  return sorted[0]?.allocation ?? DEFAULT_ALLOCATION;
+}
+
+/**
  * Log a real transfer (a new target allocation you actually set on tsp.gov).
  * Rejects, rather than silently accepting, two known v1 bugs:
  *   - a no-op: identical to your last LOGGED allocation (the seed default if
@@ -95,8 +108,7 @@ export function getTransferLog() {
 export function addTransferLogEntry({ date, allocation, note = '' }) {
   const normalized = normalizeAllocation(allocation);
   const log = getTransferLog();
-  const sorted = [...log].sort((a, b) => (a.date < b.date ? 1 : -1));
-  const lastLogged = sorted[0]?.allocation ?? DEFAULT_ALLOCATION;
+  const lastLogged = getLastLoggedAllocation();
 
   if (allocationsEqual(normalized, lastLogged)) {
     return { ok: false, reason: 'That matches your last logged allocation already — nothing to log.', log };

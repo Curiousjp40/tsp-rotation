@@ -1,9 +1,15 @@
 # TSP Fund Rotation Dashboard
 
-A **read-only** monitoring and decision-support dashboard for Thrift Savings Plan (TSP) fund
-allocation. It tracks a *weighted blend* across the C, S, I, F, and G funds (real TSP accounts
-are a mix, not 100% in one fund), ranks the five funds by trailing performance, and surfaces
-when rebalancing is worth considering — while respecting TSP's actual transfer rules.
+A **read-only** tool for Thrift Savings Plan (TSP) fund allocation, built around a *weighted
+blend* across the C, S, I, F, and G funds (real TSP accounts are a mix, not 100% in one fund).
+
+**Primary view: a plain return calculator.** Pick a period, edit your allocation, see what it
+would have returned — no jargon, no recommendation. This is the honest result of actually
+running the validation the project called for (see "Parameter sweep" below): the rotation/
+rebalance-signal machinery this project started as didn't show a validated edge over simply
+holding C Fund, so it's no longer the first thing the dashboard shows. It's still here, fully
+working, behind a collapsed **"Advanced / experimental"** section — worth re-checking as more
+data comes in, just not something to act on today.
 
 **It does not execute trades.** TSP has no public transaction API. Every real reallocation
 still happens manually at [tsp.gov](https://www.tsp.gov). This tool is decision support and
@@ -24,25 +30,47 @@ record-keeping only, not investment advice, and not a guarantee of performance.
 
 See [`SPEC.md`](./SPEC.md) for the full build spec (v1 and v2, with a running "deviations" log).
 
+## Return calculator (primary view)
+
+Pick a period (1M / 3M / 6M / 1Y / YTD / custom range), edit the allocation, and see one big
+number: what that blend would have returned over that period, plus each individual fund's
+return over the same period for comparison. Three one-tap presets — **100% C Fund** (the
+best-returning static benchmark), **Even split**, and **Your current holding** — swap the
+allocation in without retyping. "Your current holding" always restores your last *logged* real
+allocation (from the transfer log), regardless of what you've been exploring with the other
+presets or by hand.
+
 ## The allocation model
 
 Your holding is a set of percentages across C/S/I/F/G summing to 100 — editable directly in
 the "Your allocation" card, structured like TSP's own reallocation screen. Editing it updates
-every calculation immediately (chart, ranking, signals) so you can explore "what if" freely.
-It's a **snapshot as of your last update**, not auto-adjusted day to day as fund prices move —
-nudge it periodically if real-world drift matters to you.
+every calculation immediately (the calculator's big number, and everything in Advanced /
+experimental) so you can explore "what if" freely. It's a **snapshot as of your last update**,
+not auto-adjusted day to day as fund prices move — nudge it periodically if real-world drift
+matters to you.
 
 Clicking **"Log as real transfer on tsp.gov"** records that snapshot into the transfer log
-(only do this after you've actually made the move) — this is what drives the monthly transfer
-count and the audit trail, and it's guarded against two easy mistakes: logging something
-identical to your last logged allocation (a no-op), and logging an exact duplicate entry for
-the same date.
+(only do this after you've actually made the move — not after exploring a calculator preset)
+— this is what drives the monthly transfer count and the audit trail, and it's guarded against
+two easy mistakes: logging something identical to your last logged allocation (a no-op), and
+logging an exact duplicate entry for the same date.
+
+## Advanced / experimental: rebalance signals (unvalidated)
+
+Collapsed by default — this is the rotation/rebalance-signal engine the project started as,
+kept working and available but explicitly not the primary recommendation surface, since the
+parameter sweep below found no validated edge for it. Opening it shows the backtest results
+first, specifically so the "why is this labeled experimental" context is immediate rather than
+buried.
 
 Rebalance signals propose a **tilt** by default — shifting a configurable slice (10-15pp,
 default 12) from your current biggest laggard toward the ranked leader — rather than a full
 swap. A **full rotation** mode (move everything to the leader) is selectable in Rules &
 Strategy. Alongside a signal, the dashboard shows a **hindsight** comparison (what your blend
 would have returned at 100% in the leader) — explicitly labeled as hindsight, not a forecast.
+A caveat banner on the signal panel reads live from the saved sweep results and says plainly
+that the rule set is unvalidated (it'll flip to a validated confirmation automatically if a
+future re-run ever finds a combination that passes).
 
 ## Data source
 

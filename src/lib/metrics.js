@@ -65,15 +65,53 @@ function windowStartIndex(prices, asOfIndex, windowMonths) {
   return idx < 0 ? null : idx;
 }
 
+/**
+ * Resolve a flexible calculator period to concrete {startIndex, endIndex}.
+ * `period` is one of:
+ *   { kind: 'months', months: 1|3|6|12 }
+ *   { kind: 'ytd' }                          -- from the prior year-end close
+ *   { kind: 'custom', start: 'YYYY-MM-DD', end?: 'YYYY-MM-DD' }
+ * Returns null if there isn't enough history to resolve it (e.g. a custom
+ * start before the dataset begins, or YTD requested with no prior year-end).
+ */
+function resolvePeriod(prices, asOfIndex, period) {
+  const asOfDate = prices[asOfIndex].date;
+  if (period.kind === 'months') {
+    const startIdx = windowStartIndex(prices, asOfIndex, period.months);
+    return startIdx === null ? null : { startIndex: startIdx, endIndex: asOfIndex };
+  }
+  if (period.kind === 'ytd') {
+    const priorYearEnd = `${Number(asOfDate.slice(0, 4)) - 1}-12-31`;
+    const startIdx = findIndexOnOrBefore(prices, priorYearEnd);
+    return startIdx < 0 ? null : { startIndex: startIdx, endIndex: asOfIndex };
+  }
+  if (period.kind === 'custom') {
+    // A start before the dataset begins clamps to the earliest available row
+    // (friendlier for a "let me see" calculator than erroring) — but a range
+    // that's entirely before the data, or inverted, has nothing to show.
+    let startIdx = findIndexOnOrBefore(prices, period.start);
+    if (startIdx < 0) startIdx = 0;
+    const endIdx = period.end ? findIndexOnOrBefore(prices, period.end) : asOfIndex;
+    if (endIdx < 0 || startIdx >= endIdx) return null;
+    return { startIndex: startIdx, endIndex: endIdx };
+  }
+  return null;
+}
+
 // ---- core math ------------------------------------------------------------
+
+/** % return of `fund` between two explicit indices — the primitive everything else builds on. */
+function returnBetween(prices, fund, startIdx, endIdx) {
+  const startPrice = prices[startIdx][fund];
+  const endPrice = prices[endIdx][fund];
+  if (startPrice == null || endPrice == null) return null;
+  return ((endPrice - startPrice) / startPrice) * 100;
+}
 
 function trailingReturnPct(prices, fund, asOfIndex, windowMonths) {
   const startIdx = windowStartIndex(prices, asOfIndex, windowMonths);
   if (startIdx === null) return null;
-  const startPrice = prices[startIdx][fund];
-  const endPrice = prices[asOfIndex][fund];
-  if (startPrice == null || endPrice == null) return null;
-  return ((endPrice - startPrice) / startPrice) * 100;
+  return returnBetween(prices, fund, startIdx, asOfIndex);
 }
 
 /** Day-over-day % returns for `fund` across (startIdx, endIdx] — length endIdx-startIdx. */
@@ -207,19 +245,26 @@ function heldFunds(allocation, funds = CORE_FUNDS) {
   return funds.filter((f) => (allocation?.[f] ?? 0) > 0);
 }
 
+/** Blended % return for `allocation` between two explicit indices — the Calculator's core primitive. */
+function blendedReturnBetween(prices, allocation, startIdx, endIdx) {
+  const weights = weightsFromAllocation(allocation);
+  let total = 0;
+  for (const fund of heldFunds(allocation)) {
+    const r = returnBetween(prices, fund, startIdx, endIdx);
+    if (r == null) return null;
+    total += weights[fund] * r;
+  }
+  return total;
+}
+
 /**
  * Blended trailing return for `allocation` over `windowMonths`, ending at
  * asOfIndex. Returns null if any held fund lacks enough history for the window.
  */
 function blendedReturnPct(prices, allocation, asOfIndex, windowMonths) {
-  const weights = weightsFromAllocation(allocation);
-  let total = 0;
-  for (const fund of heldFunds(allocation)) {
-    const r = trailingReturnPct(prices, fund, asOfIndex, windowMonths);
-    if (r == null) return null;
-    total += weights[fund] * r;
-  }
-  return total;
+  const startIdx = windowStartIndex(prices, asOfIndex, windowMonths);
+  if (startIdx === null) return null;
+  return blendedReturnBetween(prices, allocation, startIdx, asOfIndex);
 }
 
 /**
@@ -323,6 +368,8 @@ module.exports = {
   subtractMonthsISO,
   findIndexOnOrBefore,
   windowStartIndex,
+  resolvePeriod,
+  returnBetween,
   trailingReturnPct,
   dailyReturns,
   stdDev,
@@ -335,6 +382,7 @@ module.exports = {
   cumulativeReturnSeries,
   weightsFromAllocation,
   heldFunds,
+  blendedReturnBetween,
   blendedReturnPct,
   blendedValueSeries,
   dailyReturnsFromSeries,

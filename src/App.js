@@ -7,6 +7,7 @@ import {
 } from './lib/metrics';
 import * as storage from './lib/storage';
 import AllocationInput from './components/AllocationInput';
+import Calculator from './components/Calculator';
 import SettingsPanel from './components/SettingsPanel';
 import TransferTracker from './components/TransferTracker';
 import RegimeToggle from './components/RegimeToggle';
@@ -28,6 +29,7 @@ export default function App() {
   const [regime, setRegimeState] = useState(storage.getRegime());
   const [transferLog, setTransferLog] = useState(storage.getTransferLog());
   const [signalLog, setSignalLog] = useState(storage.getSignalLog());
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   useEffect(() => {
     fetch(`${process.env.PUBLIC_URL}/data/sweep-results.json`)
@@ -89,6 +91,12 @@ export default function App() {
     setSignalLog(storage.markSignalActed(id, actedOn));
   }, []);
 
+  // Cheap read (sort a small array), recomputed every render on purpose so it
+  // always reflects the latest transferLog state — not worth memoizing, and
+  // memoizing it made the dependency (storage reads transferLog indirectly,
+  // not directly) illegible to the exhaustive-deps lint rule.
+  const lastLoggedAllocation = storage.getLastLoggedAllocation();
+
   const transfersUsedThisMonth = useMemo(() => {
     const ym = new Date().toISOString().slice(0, 7);
     return transferLog.filter((e) => e.date.slice(0, 7) === ym).length;
@@ -143,10 +151,10 @@ export default function App() {
       </header>
 
       <main className="main">
-        <h1 className="page-title">C / S / I / F / G rebalancing monitor</h1>
+        <h1 className="page-title">C / S / I / F / G return calculator</h1>
         <p className="page-sub">
-          Read-only monitoring and decision support. Every real reallocation still happens manually on tsp.gov —
-          this dashboard never executes a trade.
+          What would your split have earned? Read-only, no recommendations — every real reallocation still happens
+          manually on tsp.gov, this dashboard never executes a trade.
         </p>
 
         {error && (
@@ -165,28 +173,49 @@ export default function App() {
               onLogTransfer={handleLogTransfer}
             />
 
-            <div className="grid-top">
-              <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} />
-              <TransferTracker transferLog={transferLog} transfersUsed={transfersUsedThisMonth} />
-              <RegimeToggle regime={regime} onChange={handleRegimeChange} />
-            </div>
-
-            <SignalPanel signal={signal} onLogSignal={handleLogSignal} sweepStatus={sweepStatus} sweepBest={sweep?.best} />
-
-            <RotationChart
+            <Calculator
               prices={data.prices}
               asOfIndex={asOfIndex}
-              windowMonths={settings.windowMonths}
               allocation={allocation}
+              onAllocationChange={handleAllocationChange}
+              lastLoggedAllocation={lastLoggedAllocation}
             />
 
-            <RankingTable ranking={signal.ranking} blended={blended} allocation={allocation} windowMonths={settings.windowMonths} />
+            <button
+              type="button"
+              className="btn"
+              style={{ marginBottom: '1rem' }}
+              onClick={() => setAdvancedOpen((v) => !v)}
+            >
+              {advancedOpen ? '▾' : '▸'} Advanced / experimental — rotation signals (unvalidated, see below)
+            </button>
 
-            <SweepSummary sweep={sweep} status={sweepStatus} />
+            {advancedOpen && (
+              <div className="advanced-section">
+                <BacktestSummary />
 
-            <BacktestSummary />
+                <SweepSummary sweep={sweep} status={sweepStatus} />
 
-            <SignalLog signalLog={signalLog} onMarkActed={handleMarkActed} />
+                <div className="grid-top">
+                  <SettingsPanel settings={settings} onSettingsChange={handleSettingsChange} />
+                  <TransferTracker transferLog={transferLog} transfersUsed={transfersUsedThisMonth} />
+                  <RegimeToggle regime={regime} onChange={handleRegimeChange} />
+                </div>
+
+                <SignalPanel signal={signal} onLogSignal={handleLogSignal} sweepStatus={sweepStatus} sweepBest={sweep?.best} />
+
+                <RotationChart
+                  prices={data.prices}
+                  asOfIndex={asOfIndex}
+                  windowMonths={settings.windowMonths}
+                  allocation={allocation}
+                />
+
+                <RankingTable ranking={signal.ranking} blended={blended} allocation={allocation} windowMonths={settings.windowMonths} />
+
+                <SignalLog signalLog={signalLog} onMarkActed={handleMarkActed} />
+              </div>
+            )}
           </>
         )}
       </main>

@@ -142,6 +142,22 @@ That's roughly 190 combinations, each run against the full 2003-2026 history, lo
 
 **Once (if) something passes**: that becomes the production rule set, replacing today's defaults (3mo / 2pp / 8% / 12pp), and the Current Signal panel states its recommendation with actual backing. If nothing in the sweep clears the bar in both windows, that's a real finding too, it means this family of rules (trailing-return relative strength with a drawdown safety valve) doesn't have an edge over this history, and the dashboard's honest job becomes telling you "stay put" on most logins, which is still telling you what to invest in, the answer just won't always be a different fund.
 
+## 12. Simplify, the calculator is the primary view now
+
+The parameter sweep in section 11 came back negative: no combination beat static C Fund both in-sample and out-of-sample. That changes what the main screen should be. Right now the primary surface is signal-generation machinery (lookback window, margin threshold, tilt size, drawdown trigger, strategy toggle, current-signal panel), all in service of a rotation edge that's now been tested and not found. Keeping that as the main view, after running the test it asked for, buries the honest answer under controls for a system that doesn't work.
+
+Rebuild the primary view as a plain return calculator:
+
+1. **A period selector**: last month, 3 months, 6 months, 1 year, YTD, custom date range. One control, no jargon.
+2. **The allocation input**: the existing five percentage fields (C/S/I/F/G, sum to 100), unchanged, this part already does exactly what's needed.
+3. **One big number**: "Your blend would have returned: X%" for the selected period, updating live as the percentages change. This is the headline, large and immediate, no scrolling required to see it.
+4. **A plain list below it**: each individual fund's return over the same period (C Fund: X%, S Fund: X%, etc.), so a 100%-in-one-fund comparison is visible at a glance without retyping anything.
+5. **A few one-tap presets**: "100% C Fund" (the historically best-returning static option from the section 8 backtest), "Even split," and "Your current holding," auto-filling the percentage fields so comparing scenarios doesn't require manual re-typing.
+
+This view answers "what would this split have earned" honestly and immediately, for any period, any allocation, no jargon. It's not a recommendation engine and shouldn't pretend to be one, it's an answer to "let me see," which is what a 192-combination test just confirmed is the more trustworthy thing to offer. Deciding an actual target allocation from what it shows is a personal call (risk tolerance, time horizon), not something the tool should assert as optimized.
+
+**Move the signal/rotation machinery** (sections 4, 5, and the rules-and-strategy panel, current-signal panel, transfer tracker, and regime flag from section 7) **behind a clearly labeled "Advanced / experimental" section**, collapsed by default. Not deleted, the parameter search from section 11 is worth re-running periodically as more data comes in, but it shouldn't be the first thing the dashboard shows since it isn't currently backed by evidence. Keep the backtest results panel visible right at the top of that section, so anyone who opens it immediately sees why it's labeled experimental.
+
 ---
 
 ## Deviations from this spec (v2)
@@ -210,6 +226,31 @@ One methodology note worth being honest about: "out of sample" here means the sw
 half separately — a consistency check across sub-periods, not a blind holdout in the strict
 sense (the full range that picked the winner contains both halves). `SweepSummary.jsx` and the
 README both say this plainly rather than overclaiming what got validated.
+
+## Section 12 result — calculator is now the primary view
+
+Built as specced: a new `Calculator.jsx` is the first thing the dashboard shows (period
+selector — 1M/3M/6M/1Y/YTD/custom range — plus the existing `AllocationInput`, a large blended-
+return number, a plain per-fund list, and the three presets). Everything from the old primary
+view (Rules & Strategy, Transfer Tracker, Regime flag, Current Signal, the chart, ranking
+table, and signal log) now lives behind a collapsed "Advanced / experimental" toggle, with
+`BacktestSummary` pinned first inside it per the spec's instruction.
+
+One addition beyond the letter of the spec, in the same spirit: the "Your current holding"
+preset needed a genuine "current" to restore, distinct from whatever's been live-edited while
+exploring the other presets — `AllocationInput` commits every edit immediately (by design, for
+live what-if calculations), so a naive "current" reference would just be the last thing you
+clicked. Added `storage.getLastLoggedAllocation()` (the same lookup the transfer-log no-op
+guard already used) as the one honest source of "what you actually, really hold" — sourced from
+the immutable transfer-log history, not the mutable live-edit state.
+
+`metrics.js` gained a lower-level `returnBetween`/`blendedReturnBetween` primitive (return
+between two explicit indices, not just "N months back from today") to support the calculator's
+flexible period selector; `trailingReturnPct`/`blendedReturnPct` were refactored to be thin
+wrappers over it — same external behavior, re-verified against the existing 12.19% unit test
+after the refactor, plus two new tests for `resolvePeriod` (YTD anchors to the prior year-end
+close; a custom start before the dataset clamps to the earliest available row rather than
+erroring — friendlier for a "let me see" calculator than a hard failure).
 
 ---
 

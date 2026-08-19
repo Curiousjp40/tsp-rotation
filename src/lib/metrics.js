@@ -32,6 +32,13 @@ function subtractMonthsISO(dateStr, months) {
   return formatISO(result);
 }
 
+/** Subtract N calendar days from an ISO date string, return an ISO string. */
+function subtractDaysISO(dateStr, days) {
+  const d = parseISO(dateStr);
+  const result = new Date(d.getTime() - days * 24 * 3600 * 1000);
+  return formatISO(result);
+}
+
 // ---- lookup -------------------------------------------------------------
 
 /**
@@ -68,6 +75,7 @@ function windowStartIndex(prices, asOfIndex, windowMonths) {
 /**
  * Resolve a flexible calculator period to concrete {startIndex, endIndex}.
  * `period` is one of:
+ *   { kind: 'days', days: 7|14 }              -- short-term, noisier by nature (see Calculator.jsx)
  *   { kind: 'months', months: 1|3|6|12 }
  *   { kind: 'ytd' }                          -- from the prior year-end close
  *   { kind: 'custom', start: 'YYYY-MM-DD', end?: 'YYYY-MM-DD' }
@@ -76,6 +84,11 @@ function windowStartIndex(prices, asOfIndex, windowMonths) {
  */
 function resolvePeriod(prices, asOfIndex, period) {
   const asOfDate = prices[asOfIndex].date;
+  if (period.kind === 'days') {
+    const startDate = subtractDaysISO(asOfDate, period.days);
+    const startIdx = findIndexOnOrBefore(prices, startDate);
+    return startIdx < 0 ? null : { startIndex: startIdx, endIndex: asOfIndex };
+  }
   if (period.kind === 'months') {
     const startIdx = windowStartIndex(prices, asOfIndex, period.months);
     return startIdx === null ? null : { startIndex: startIdx, endIndex: asOfIndex };
@@ -366,6 +379,7 @@ module.exports = {
   parseISO,
   formatISO,
   subtractMonthsISO,
+  subtractDaysISO,
   findIndexOnOrBefore,
   windowStartIndex,
   resolvePeriod,

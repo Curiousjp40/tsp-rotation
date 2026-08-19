@@ -2,6 +2,8 @@ import { useState, useMemo } from 'react';
 import { resolvePeriod, blendedReturnBetween, returnBetween, CORE_FUNDS } from '../lib/metrics';
 
 const PERIODS = [
+  { id: '1w', label: '1 Week', period: { kind: 'days', days: 7 } },
+  { id: '2w', label: '2 Weeks', period: { kind: 'days', days: 14 } },
   { id: '1m', label: '1 Month', period: { kind: 'months', months: 1 } },
   { id: '3m', label: '3 Months', period: { kind: 'months', months: 3 } },
   { id: '6m', label: '6 Months', period: { kind: 'months', months: 6 } },
@@ -59,6 +61,13 @@ export default function Calculator({ prices, asOfIndex, allocation, onAllocation
           <button key={p.id} type="button" className={periodId === p.id ? 'active' : ''} onClick={() => setPeriodId(p.id)}>{p.label}</button>
         ))}
       </div>
+
+      {(periodId === '1w' || periodId === '2w') && (
+        <div className="chart-legend-note" style={{ marginTop: '.6rem' }}>
+          Day-to-day fund moves are mostly noise, not signal — a week's "leader" flips around a lot more than a 3-month
+          one does. This view is useful for "what just happened," not for judging which fund is doing better.
+        </div>
+      )}
 
       {periodId === 'custom' && (
         <div className="field-row" style={{ marginTop: '.8rem' }}>

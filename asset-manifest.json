@@ -1,0 +1,13 @@
+{
+  "files": {
+    "main.css": "/tsp-rotation/static/css/main.dd471c39.css",
+    "main.js": "/tsp-rotation/static/js/main.9c77a76b.js",
+    "index.html": "/tsp-rotation/index.html",
+    "main.dd471c39.css.map": "/tsp-rotation/static/css/main.dd471c39.css.map",
+    "main.9c77a76b.js.map": "/tsp-rotation/static/js/main.9c77a76b.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.dd471c39.css",
+    "static/js/main.9c77a76b.js"
+  ]
+}

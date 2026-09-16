@@ -29,9 +29,35 @@ jobs:
       - run: node scripts/fetch-prices.js
 
       - name: Commit updated price data
+        id: commit
         run: |
           git config user.name "tsp-rotation-bot"
           git config user.email "actions@github.com"
           git add public/data/tsp-prices.json
-          git diff --cached --quiet && echo "No changes" || git commit -m "Update TSP price data"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "Update TSP price data"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Fetching fresh data alone doesn't help anyone: this is a static
+      # build, and the live site only ever shows whatever was baked into
+      # the last `npm run build`. Without this step, master's data can be
+      # perfectly current while the deployed site is frozen on day-one data
+      # forever (which is exactly the bug this step fixes — see SPEC.md's
+      # "Post-launch: production debugging" section). Only rebuild/redeploy
+      # when there's actually new data to show, so an unchanged day doesn't
+      # burn a Pages deploy.
+      - name: Build
+        if: steps.commit.outputs.changed == 'true'
+        run: npm run build
+
+      - name: Deploy to GitHub Pages
+        if: steps.commit.outputs.changed == 'true'
+        run: |
+          npx gh-pages -d build \
+            -u "tsp-rotation-bot <actions@github.com>" \
+            -r "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"

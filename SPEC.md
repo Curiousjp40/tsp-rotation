@@ -252,6 +252,48 @@ after the refactor, plus two new tests for `resolvePeriod` (YTD anchors to the p
 close; a custom start before the dataset clamps to the earliest available row rather than
 erroring — friendlier for a "let me see" calculator than a hard failure).
 
+## Post-launch: production debugging + two small additions (2026-09-15)
+
+The live site had been showing "Data as of 2026-08-18" for weeks despite the daily price-fetch
+workflow existing since the initial push. Diagnosed via the GitHub Actions REST API directly
+(`GET .../actions/workflows/update-prices.yml/runs` and the workflow's own `created_at`), not
+guesswork — two independent, stacked causes:
+
+1. **GitHub didn't activate the scheduled workflow for ~3 weeks after it was pushed.** The
+   workflow's own `created_at` (when GitHub actually registers it as live) was 2026-09-10, not
+   the push date — a known platform quirk: a newly pushed repo's `schedule`-triggered workflows
+   don't start firing until someone visits the repo's Actions tab. Once that happened, it ran
+   daily and successfully every time (verified: 6/6 runs `success` from 09-10 onward). Not a bug
+   in this repo's config — now documented in the README as a heads-up for next time.
+2. **The actual live-site bug**: even after the schedule started working and `master`'s
+   `public/data/tsp-prices.json` was updating daily, the *deployed* site (the `gh-pages` branch)
+   never got rebuilt — confirmed by reading `gh-pages`'s own committed JSON directly
+   (`git show origin/gh-pages:data/tsp-prices.json`), still frozen at the one-time manual
+   `npm run deploy` from initial launch. `update-prices.yml` only ever committed to `master`;
+   nothing rebuilt/redeployed the static build. Fixed by extending that same workflow to run
+   `npm run build` + push to `gh-pages` (via `gh-pages` CLI authenticated with the workflow's own
+   `GITHUB_TOKEN`), gated on a `steps.commit.outputs.changed` flag so an unchanged day doesn't
+   burn a redundant Pages deploy.
+
+Two additions built alongside the fix:
+
+- **`DataFreshness.jsx`**: "Data as of" / "Next scheduled update" / price-fetch workflow health,
+  shown directly on the main page. Reads the real GitHub Actions run history client-side (public
+  API, sends `Access-Control-Allow-Origin: *` for unauthenticated reads on a public repo —
+  verified directly with `curl -I` before relying on it) rather than trusting the committed
+  JSON's own `fetchedAt`, which would stay silent if the pipeline ever started failing again; a
+  failed most-recent run is surfaced with a direct link rather than hidden. "Next scheduled
+  update" is computed from the known cron (`30 3 * * *` UTC), not pulled from the API — GitHub's
+  Actions API doesn't expose a "next run" field, only past run history.
+- **"🏆 Highest return this period"** label in the calculator's per-fund list: purely descriptive
+  (whichever fund's own return topped the list for the currently selected period), explicitly
+  worded to avoid recommendation-shaped language, with the panel's existing no-recommendation
+  disclaimer extended to name it directly. This was a deliberate line to hold: the initial ask in
+  this same conversation was for the dashboard to output "I recommend investing X% here" —
+  declined, since the parameter sweep already proved this rule family has no validated edge, and
+  personalized investment recommendations are out of scope for what this tool does. This label is
+  the non-advice version of that ask: a fact about the past, not a suggestion.
+
 ---
 
 ## Appendix: v1 spec (superseded by the above)

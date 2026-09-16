@@ -32,13 +32,16 @@ See [`SPEC.md`](./SPEC.md) for the full build spec (v1 and v2, with a running "d
 
 ## Return calculator (primary view)
 
-Pick a period (1M / 3M / 6M / 1Y / YTD / custom range), edit the allocation, and see one big
-number: what that blend would have returned over that period, plus each individual fund's
-return over the same period for comparison. Three one-tap presets — **100% C Fund** (the
-best-returning static benchmark), **Even split**, and **Your current holding** — swap the
-allocation in without retyping. "Your current holding" always restores your last *logged* real
-allocation (from the transfer log), regardless of what you've been exploring with the other
-presets or by hand.
+Pick a period (1W / 2W / 1M / 3M / 6M / 1Y / YTD / custom range — the two short-window options
+carry an in-UI note that day-to-day moves are mostly noise, not signal), edit the allocation,
+and see one big number: what that blend would have returned over that period, plus each
+individual fund's return over the same period for comparison, with whichever fund topped the
+list marked **"🏆 Highest return this period"** — a fact about the past, deliberately worded to
+not read as "invest here": no fund's row is ever styled as a recommendation, and the panel's own
+disclaimer says so explicitly. Three one-tap presets — **100% C Fund** (the best-returning
+static benchmark), **Even split**, and **Your current holding** — swap the allocation in without
+retyping. "Your current holding" always restores your last *logged* real allocation (from the
+transfer log), regardless of what you've been exploring with the other presets or by hand.
 
 ## The allocation model
 
@@ -95,12 +98,38 @@ run (only current through the last *closed* month) — daily data avoids that by
 but a bad pull or broken parse could still slip through quietly without a check.
 
 A scheduled workflow (`.github/workflows/update-prices.yml`) runs this automatically every
-evening (~10:30-11:30pm ET) and commits the result. Weekend/holiday runs just re-fetch the
-same closing data and no-op — TSP only posts one NAV per business day either way. **For the
-bot's commit/push to succeed**, the repo needs *Settings → Actions → General → Workflow
-permissions → "Read and write permissions"* enabled (the workflow's own
+evening (~10:30-11:30pm ET), commits the result **and rebuilds/redeploys the live site** when
+the data actually changed. Weekend/holiday runs just re-fetch the same closing data and no-op
+— TSP only posts one NAV per business day either way, no point rebuilding for nothing.
+
+**For the bot's commit/push to succeed**, the repo needs *Settings → Actions → General →
+Workflow permissions → "Read and write permissions"* enabled (the workflow's own
 `permissions: contents: write` block covers the token scope, but the repo-level toggle also
 needs to allow it).
+
+**A real gotcha hit in production, worth knowing about**: pushing a repo with a `schedule`-
+triggered workflow doesn't mean the schedule is live yet. GitHub doesn't actually register a
+new repo's scheduled workflow until someone visits its Actions tab (the workflow's own
+`created_at`, visible via `GET /repos/:owner/:repo/actions/workflows/:file`, only gets set at
+that point — in this repo's case it sat for about three weeks after the file was pushed before
+anyone visited Actions and it activated). If price data looks stale right after first pushing
+this repo, that's very likely why — visit the Actions tab once, or run the workflow manually
+via **Actions → Update TSP Prices → Run workflow** to kick it into gear immediately.
+
+A second, separate gotcha compounded that in this repo's actual history: even once the
+schedule started firing and successfully updating `public/data/tsp-prices.json` on `master`,
+the **live site stayed frozen** on whatever was baked in at the last `npm run deploy` — because
+this is a static build, and nothing was rebuilding/redeploying it automatically. The workflow
+above now does that itself (build + `gh-pages` deploy, gated on `steps.commit.outputs.changed`
+so it only fires on days there's actually new data) — but it's worth understanding why "the
+data pipeline is running fine" and "the live site is up to date" used to be two different,
+independently-failing things.
+
+**"Data as of" / "Next scheduled update"**, shown on the dashboard itself (`DataFreshness.jsx`),
+reads the *actual* GitHub Actions run history for this workflow client-side (public API, CORS-
+open for unauthenticated reads on a public repo) — not a hardcoded date, and not blindly
+trusting the committed JSON's own `fetchedAt` either, which would stay silent if the pipeline
+started failing. If the most recent run failed, that's surfaced directly with a link to it.
 
 ## Backtest before trusting any live signal
 

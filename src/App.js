@@ -8,6 +8,7 @@ import {
 import * as storage from './lib/storage';
 import AllocationInput from './components/AllocationInput';
 import Calculator from './components/Calculator';
+import DataFreshness from './components/DataFreshness';
 import SettingsPanel from './components/SettingsPanel';
 import TransferTracker from './components/TransferTracker';
 import RegimeToggle from './components/RegimeToggle';
@@ -146,7 +147,6 @@ export default function App() {
       <header className="header">
         <div className="header-inner">
           <div className="logo"><span className="logo-icon">📊</span>TSP Rotation Dashboard</div>
-          {data && <div className="data-asof">Data as of <strong>{data.asOf}</strong></div>}
         </div>
       </header>
 
@@ -156,6 +156,8 @@ export default function App() {
           What would your split have earned? Read-only, no recommendations — every real reallocation still happens
           manually on tsp.gov, this dashboard never executes a trade.
         </p>
+
+        {data && <DataFreshness asOf={data.asOf} />}
 
         {error && (
           <div className="card">

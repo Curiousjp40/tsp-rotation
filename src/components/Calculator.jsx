@@ -43,6 +43,14 @@ export default function Calculator({ prices, asOfIndex, allocation, onAllocation
     ? CORE_FUNDS.map((fund) => ({ fund, returnPct: returnBetween(prices, fund, resolved.startIndex, resolved.endIndex) }))
     : [];
 
+  // Purely descriptive — which fund happened to top the list for the
+  // selected period. Not a suggestion to move money there: see the
+  // no-recommendation note below and Advanced/experimental's own findings.
+  const topFund = fundReturns.reduce(
+    (best, r) => (r.returnPct != null && (!best || r.returnPct > best.returnPct) ? r : best),
+    null
+  );
+
   const periodLabel = PERIODS.find((p) => p.id === periodId)?.label;
   const rangeLabel = resolved ? `${prices[resolved.startIndex].date} to ${prices[resolved.endIndex].date}` : null;
 
@@ -106,12 +114,13 @@ export default function Calculator({ prices, asOfIndex, allocation, onAllocation
 
           <div className="table-wrap">
             <table className="data-table">
-              <thead><tr><th>Fund</th><th className="num">Return, same period</th></tr></thead>
+              <thead><tr><th>Fund</th><th className="num">Return, same period</th><th></th></tr></thead>
               <tbody>
                 {fundReturns.map((r) => (
-                  <tr key={r.fund}>
+                  <tr key={r.fund} className={topFund && r.fund === topFund.fund ? 'leader-row' : ''}>
                     <td><span className={`badge badge-fund fund-${r.fund}`}>{r.fund}</span></td>
                     <td className={`num ${r.returnPct != null && r.returnPct >= 0 ? 'pos' : 'neg'}`}>{fmtPct(r.returnPct)}</td>
+                    <td className="stat-note">{topFund && r.fund === topFund.fund ? '🏆 Highest return this period' : ''}</td>
                   </tr>
                 ))}
               </tbody>
@@ -121,7 +130,8 @@ export default function Calculator({ prices, asOfIndex, allocation, onAllocation
       )}
 
       <div className="chart-legend-note" style={{ marginTop: '.8rem' }}>
-        A plain calculation, not a recommendation — a 192-combination parameter search (see "Advanced / experimental" below)
+        A plain calculation, not a recommendation — the "highest return this period" label is a fact about the past,
+        not a suggestion to move money there. A 192-combination parameter search (see "Advanced / experimental" below)
         found no rule set that beats simply holding C Fund both in-sample and out-of-sample. Deciding a target allocation
         is a personal call (risk tolerance, time horizon), not something this tool asserts as optimized.
       </div>

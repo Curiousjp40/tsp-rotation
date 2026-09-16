@@ -65,6 +65,14 @@ body {
 .freshness-row { font-size: .86rem; }
 .freshness-sep { margin: 0 .6rem; color: var(--border); }
 
+/* Top-2 momentum split: number, caveat, and action button as equal-weight
+   siblings in one row — the caveat is deliberately NOT a small footnote. */
+.top2-row { display: flex; gap: 1.2rem; flex-wrap: wrap; align-items: stretch; }
+.top2-cell { flex: 1 1 240px; display: flex; flex-direction: column; justify-content: center; }
+.top2-number { font-size: 1.7rem; font-weight: 800; line-height: 1.3; }
+.top2-caveat { margin: 0; font-size: .95rem; display: flex; align-items: center; }
+.top2-action { flex: 0 1 240px; align-items: flex-start; justify-content: center; }
+
 .main { flex: 1; max-width: 1280px; margin: 0 auto; padding: 1.75rem 2rem 3rem; width: 100%; }
 .page-title { font-size: 1.4rem; font-weight: 700; margin-bottom: .3rem; }
 .page-sub { color: var(--muted); font-size: .88rem; margin-bottom: 1.5rem; }

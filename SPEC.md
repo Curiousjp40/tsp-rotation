@@ -294,6 +294,30 @@ Two additions built alongside the fix:
   personalized investment recommendations are out of scope for what this tool does. This label is
   the non-advice version of that ask: a fact about the past, not a suggestion.
 
+## The "section 13" that wasn't, and the top-2 momentum split that followed
+
+Two follow-up requests referenced a "SPEC.md section 13" that never actually existed in this
+file (checked every branch both times) — going entirely off what was described in each message,
+not a file that wasn't there.
+
+The first version asked for a computed top-2-by-return split to become *the entire main page*:
+headline number, pre-filled "Log this as your real transfer" button, with current holding, the
+full return list, the freshness card, the calculator, and Advanced/experimental all collapsed
+behind a single "More detail" toggle closed by default — including, critically, the "no
+validated edge" finding itself. Declined, for a reason that goes beyond wording: collapsing the
+validation status behind a closed-by-default toggle on the one page with a one-tap way to act on
+it, functions identically to the "I recommend X%" feature already declined once in this project,
+regardless of whether the number comes from a person or a formula. It also would have repeated,
+one layer deeper, the exact mistake section 12 was built to fix — burying the honest result
+behind the machinery for a rule that doesn't work.
+
+The negotiated version — what's actually built as `TopTwoSplit.jsx` — keeps the computed split
+and the log button, drops the whole-page takeover and the collapsed toggle: the split, its two
+funds' returns, and the caveat are permanent, equal-weight, same-row siblings on the existing
+primary view, and nothing else on the page changed (current holding, calculator, freshness card,
+and Advanced/experimental all stay exactly where and how they were). See "Top-2 momentum split"
+in README.md for the formula and the fallback rule.
+
 ---
 
 ## Appendix: v1 spec (superseded by the above)

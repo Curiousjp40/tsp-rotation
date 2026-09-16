@@ -1,4 +1,4 @@
-const { blendedReturnPct, blendedReturnBetween, resolvePeriod } = require('./metrics');
+const { blendedReturnPct, blendedReturnBetween, resolvePeriod, topTwoReturnSplit } = require('./metrics');
 
 /**
  * Validates the blended-return formula against the worked example from the
@@ -48,4 +48,29 @@ test('resolvePeriod(custom) returns null when the start date predates the datase
   ];
   expect(resolvePeriod(prices, 1, { kind: 'custom', start: '2020-01-01', end: '2026-02-01' })).toEqual({ startIndex: 0, endIndex: 1 });
   expect(resolvePeriod(prices, 1, { kind: 'custom', start: '2019-01-01', end: '2019-06-01' })).toBeNull();
+});
+
+test('topTwoReturnSplit weights the top 2 funds by their own return over the sum of both', () => {
+  const prices = [
+    { date: '2026-01-01', C: 100, S: 100, I: 100, F: 100, G: 100 },
+    { date: '2026-04-01', C: 110, S: 120, I: 105, F: 102, G: 101 },
+  ];
+  const result = topTwoReturnSplit(prices, 1, 3);
+  expect(result.first.fund).toBe('S');
+  expect(result.second.fund).toBe('C');
+  expect(result.fellBack).toBe(false);
+  // 20/(20+10) = 66.67% -> rounds to 67, forced complement is 33 (sums to 100 exactly).
+  expect(result.allocation).toEqual({ C: 33, S: 67, I: 0, F: 0, G: 0 });
+});
+
+test('topTwoReturnSplit falls back to 50/50 when the top 2 returns have mixed signs', () => {
+  const prices = [
+    { date: '2026-01-01', C: 100, S: 100, I: 100, F: 100, G: 100 },
+    { date: '2026-04-01', C: 103, S: 99, I: 95, F: 94, G: 93 },
+  ];
+  const result = topTwoReturnSplit(prices, 1, 3);
+  expect(result.first.fund).toBe('C');
+  expect(result.second.fund).toBe('S');
+  expect(result.fellBack).toBe(true);
+  expect(result.allocation).toEqual({ C: 50, S: 50, I: 0, F: 0, G: 0 });
 });

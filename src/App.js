@@ -8,6 +8,7 @@ import {
 import * as storage from './lib/storage';
 import AllocationInput from './components/AllocationInput';
 import Calculator from './components/Calculator';
+import TopTwoSplit from './components/TopTwoSplit';
 import DataFreshness from './components/DataFreshness';
 import SettingsPanel from './components/SettingsPanel';
 import TransferTracker from './components/TransferTracker';
@@ -172,6 +173,12 @@ export default function App() {
             <AllocationInput
               allocation={allocation}
               onAllocationChange={handleAllocationChange}
+              onLogTransfer={handleLogTransfer}
+            />
+
+            <TopTwoSplit
+              prices={data.prices}
+              asOfIndex={asOfIndex}
               onLogTransfer={handleLogTransfer}
             />
 

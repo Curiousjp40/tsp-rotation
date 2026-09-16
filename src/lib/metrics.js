@@ -373,6 +373,52 @@ function rankFunds(prices, asOfIndex, windowMonths, { maDays = 50, rankableFunds
   return rows;
 }
 
+/**
+ * Top-2-by-trailing-return split: rank the five funds (G included — same
+ * convention as rankFunds) by trailing return over `windowMonths`, take the
+ * top 2, weight each by its own return divided by the sum of both returns,
+ * rounded to a whole percent (the two are forced to sum to exactly 100 by
+ * construction, not by independently rounding two numbers that might not
+ * add up). This is a specific, testable FORMULA — not a validated strategy.
+ * It's the same "rank by trailing return, weight toward the leaders" rule
+ * family the 192-combination parameter sweep already tested and found no
+ * validated edge for; a different weighting scheme doesn't change that.
+ *
+ * "Return divided by sum of returns" only produces a valid percentage when
+ * both returns are positive — if the top two are mixed-sign or sum to <= 0,
+ * the literal formula would produce a negative or >100% weight, which isn't
+ * a real allocation. Falls back to an even 50/50 split between the same top
+ * 2 funds in that case, flagged via `fellBack: true` so callers can say so.
+ */
+function topTwoReturnSplit(prices, asOfIndex, windowMonths = 3) {
+  const ranked = CORE_FUNDS
+    .map((fund) => ({ fund, returnPct: trailingReturnPct(prices, fund, asOfIndex, windowMonths) }))
+    .filter((r) => r.returnPct != null)
+    .sort((a, b) => b.returnPct - a.returnPct);
+
+  if (ranked.length < 2) return null;
+  const [first, second] = ranked;
+  const sum = first.returnPct + second.returnPct;
+
+  let firstPct;
+  let fellBack = false;
+  if (sum > 0 && first.returnPct >= 0 && second.returnPct >= 0) {
+    firstPct = Math.round((first.returnPct / sum) * 100);
+  } else {
+    firstPct = 50;
+    fellBack = true;
+  }
+  firstPct = Math.max(0, Math.min(100, firstPct));
+  const secondPct = 100 - firstPct;
+
+  const allocation = {};
+  for (const fund of CORE_FUNDS) allocation[fund] = 0;
+  allocation[first.fund] = firstPct;
+  allocation[second.fund] = secondPct;
+
+  return { first, second, allocation, fellBack, windowMonths };
+}
+
 module.exports = {
   CORE_FUNDS,
   RISK_FREE_FUND,
@@ -404,4 +450,5 @@ module.exports = {
   blendedSharpeStyleRatio,
   blendedTrendFilterPass,
   rankFunds,
+  topTwoReturnSplit,
 };

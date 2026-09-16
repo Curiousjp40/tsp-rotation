@@ -43,6 +43,25 @@ static benchmark), **Even split**, and **Your current holding** — swap the all
 retyping. "Your current holding" always restores your last *logged* real allocation (from the
 transfer log), regardless of what you've been exploring with the other presets or by hand.
 
+## Top-2 momentum split
+
+A separate, permanent card (`TopTwoSplit.jsx`) computed live: ranks the five funds by trailing
+3-month return, takes the top 2, and weights each by its own return divided by the sum of both
+(rounded to a whole percent, forced to sum to exactly 100). Falls back to an even 50/50 split
+between the same two funds when that formula would produce a negative or >100% weight — it only
+makes sense as a percentage when both returns are positive.
+
+This card exists as a deliberate, negotiated design: the number, its inputs, and the caveat
+*"Computed live, not validated — same rule family the 192-combination sweep already tested and
+rejected"* are equal-weight siblings in one row (`.top2-row`/`.top2-cell` in `styles.css`) —
+never a small footnote, never behind a toggle, always attached to the number. It exists instead
+of a literal "I recommend investing X%" feature that was asked for and declined earlier in this
+project's history: the formula is the same "rank by trailing return, weight the leaders" rule
+family the sweep found no validated edge for, so the caveat isn't optional styling, it's the
+part that keeps this a calculation instead of advice. The "Log this as your real transfer"
+button next to it reuses the exact same guarded `addTransferLogEntry` path as the main
+allocation card — same no-op/duplicate protection, same effect on the transfer count.
+
 ## The allocation model
 
 Your holding is a set of percentages across C/S/I/F/G summing to 100 — editable directly in

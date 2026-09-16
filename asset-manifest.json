@@ -1,13 +1,13 @@
 {
   "files": {
-    "main.css": "/tsp-rotation/static/css/main.288b2fc5.css",
-    "main.js": "/tsp-rotation/static/js/main.9ba62820.js",
+    "main.css": "/tsp-rotation/static/css/main.cff58f02.css",
+    "main.js": "/tsp-rotation/static/js/main.bb51e195.js",
     "index.html": "/tsp-rotation/index.html",
-    "main.288b2fc5.css.map": "/tsp-rotation/static/css/main.288b2fc5.css.map",
-    "main.9ba62820.js.map": "/tsp-rotation/static/js/main.9ba62820.js.map"
+    "main.cff58f02.css.map": "/tsp-rotation/static/css/main.cff58f02.css.map",
+    "main.bb51e195.js.map": "/tsp-rotation/static/js/main.bb51e195.js.map"
   },
   "entrypoints": [
-    "static/css/main.288b2fc5.css",
-    "static/js/main.9ba62820.js"
+    "static/css/main.cff58f02.css",
+    "static/js/main.bb51e195.js"
   ]
 }
